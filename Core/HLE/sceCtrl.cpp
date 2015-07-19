@@ -29,6 +29,7 @@
 #include "Core/HLE/sceKernel.h"
 #include "Core/HLE/sceKernelThread.h"
 #include "Core/HLE/sceKernelInterrupt.h"
+#include "Core/Config.h"
 
 /* Index for the two analog directions */
 #define CTRL_ANALOG_X   0
@@ -95,13 +96,12 @@ static int ctrlTimer = -1;
 static bool emuRapidFire = false;
 static u32 emuRapidFireFrames = 0;
 
-// These buttons are not affected by rapid fire (neither is analog.)
-const u32 CTRL_EMU_RAPIDFIRE_MASK = CTRL_UP | CTRL_DOWN | CTRL_LEFT | CTRL_RIGHT;
 
 static void __CtrlUpdateLatch()
 {
 	std::lock_guard<std::recursive_mutex> guard(ctrlMutex);
-	
+	// These buttons are not affected by rapid fire (neither is analog.)
+	u32 CTRL_EMU_RAPIDFIRE_MASK = CTRL_UP | CTRL_DOWN | CTRL_LEFT | CTRL_RIGHT | CTRL_LTRIGGER | CTRL_RTRIGGER | (g_Config.bRapid_Circle ? 0x0000 : CTRL_CIRCLE) | (g_Config.bRapid_Cross ? 0x0000 : CTRL_CROSS) | (g_Config.bRapid_Square ? 0x0000 : CTRL_SQUARE) | (g_Config.bRapid_Triangle ? 0x0000 : CTRL_TRIANGLE);
 	// Copy in the current data to the current buffer.
 	ctrlBufs[ctrlBuf] = ctrlCurrent;
 	u32 buttons = ctrlCurrent.buttons;
