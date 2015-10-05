@@ -716,7 +716,9 @@ void EmuScreen::update(InputState &input) {
 		return;
 
 	// Virtual keys.
-	__CtrlSetRapidFire(virtKeys[VIRTKEY_RAPID_FIRE - VIRTKEY_FIRST]);
+	if (!g_Config.bRapid)
+		__CtrlSetRapidFire(virtKeys[VIRTKEY_RAPID_FIRE - VIRTKEY_FIRST]);
+	else __CtrlSetRapidFire(true);
 
 	// Apply tilt to left stick
 	// TODO: Make into an axis

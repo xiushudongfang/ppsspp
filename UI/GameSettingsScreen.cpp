@@ -291,6 +291,8 @@ void GameSettingsScreen::CreateViews() {
 #endif
 
 	graphicsSettings->Add(new ItemHeader(gr->T("Hack Settings", "Hack Settings (these WILL cause glitches)")));
+	static const char *Hack[] = { "Off", "GE2_1.3", "Tenchu" };
+	graphicsSettings->Add(new PopupMultiChoice(&g_Config.iHack, gr->T("Hack"), Hack, 0, ARRAY_SIZE(Hack), gr, screenManager()));
 	graphicsSettings->Add(new CheckBox(&g_Config.bTimerHack, gr->T("Timer Hack")));
 	CheckBox *alphaHack = graphicsSettings->Add(new CheckBox(&g_Config.bDisableAlphaTest, gr->T("Disable Alpha Test (PowerVR speedup)")));
 	alphaHack->OnClick.Handle(this, &GameSettingsScreen::OnShaderChange);
@@ -406,6 +408,9 @@ void GameSettingsScreen::CreateViews() {
 		//Combo key Mapping
 		controlsSettings->Add(new Choice(co->T("Combo Key")))->OnClick.Handle(this, &GameSettingsScreen::OnCombo_key);
 
+		//Button separation setting
+		CheckBox *ActionButtonseparation = controlsSettings->Add(new CheckBox(&g_Config.bActionButtonseparation, co->T("Button separation")));
+		ActionButtonseparation->SetEnabledPtr(&g_Config.bShowTouchControls);
 		// On systems that aren't Symbian, iOS, and Maemo, offer to let the user see this button.
 		// Some Windows touch devices don't have a back button or other button to call up the menu.
 #if !defined(__SYMBIAN32__) && !defined(IOS) && !defined(MAEMO)
@@ -430,6 +435,14 @@ void GameSettingsScreen::CreateViews() {
 		static const char *ComboKeyStyles[] = { "ACG", "CV" };
 		View *combo_key_style = controlsSettings->Add(new PopupMultiChoice(&g_Config.iComboKeyStyle, co->T("Combo Key style"), ComboKeyStyles, 0, ARRAY_SIZE(ComboKeyStyles), co, screenManager()));
 		combo_key_style->SetEnabledPtr(&g_Config.bShowTouchControls);
+
+		controlsSettings->Add(new ItemHeader(co->T("Rapid Key Settings")));
+		CheckBox *RapidKey = controlsSettings->Add(new CheckBox(&g_Config.bShowRapidKey, co->T("Rapid Key")));
+		RapidKey->OnClick.Handle(this, &GameSettingsScreen::OnRapid);
+		controlsSettings->Add(new CheckBox(&g_Config.bRapid_Circle, co->T("Circle")))->SetEnabledPtr(&g_Config.bShowRapidKey);
+		controlsSettings->Add(new CheckBox(&g_Config.bRapid_Cross, co->T("Cross")))->SetEnabledPtr(&g_Config.bShowRapidKey);
+		controlsSettings->Add(new CheckBox(&g_Config.bRapid_Square, co->T("Square")))->SetEnabledPtr(&g_Config.bShowRapidKey);
+		controlsSettings->Add(new CheckBox(&g_Config.bRapid_Triangle, co->T("Triangle")))->SetEnabledPtr(&g_Config.bShowRapidKey);
 	}
 
 #ifdef _WIN32
@@ -599,6 +612,8 @@ void GameSettingsScreen::CreateViews() {
 	systemSettings->Add(new PopupTextInputChoice(&g_Config.sNickName, sy->T("Change Nickname"), "", 32, screenManager()));
 #elif defined(USING_QT_UI)
 	systemSettings->Add(new Choice(sy->T("Change Nickname")))->OnClick.Handle(this, &GameSettingsScreen::OnChangeNickname);
+#elif defined(ANDROID)
+	systemSettings->Add(new ChoiceWithValueDisplay(&g_Config.sNickName, sy->T("Change Nickname"), nullptr))->OnClick.Handle(this, &GameSettingsScreen::OnChangeNickname);
 #endif
 #if defined(_WIN32) || (defined(USING_QT_UI) && !defined(MOBILE_DEVICE))
 	// Screenshot functionality is not yet available on non-Windows/non-Qt
@@ -892,6 +907,8 @@ UI::EventReturn GameSettingsScreen::OnChangeNickname(UI::EventParams &e) {
 	if (System_InputBoxGetString("Enter a new PSP nickname", g_Config.sNickName.c_str(), name, name_len)) {
 		g_Config.sNickName = name;
 	}
+#elif defined(ANDROID)
+	System_SendMessage("inputbox", "Enter a new PSP nickname");
 #endif
 	return UI::EVENT_DONE;
 }
@@ -910,6 +927,8 @@ UI::EventReturn GameSettingsScreen::OnChangeproAdhocServerAddress(UI::EventParam
 	}
 	else
 		screenManager()->push(new ProAdhocServerScreen);
+#elif defined(ANDROID)
+	System_SendMessage("inputbox", g_Config.proAdhocServer.c_str());
 #else
 	screenManager()->push(new ProAdhocServerScreen);
 #endif
@@ -925,6 +944,11 @@ UI::EventReturn GameSettingsScreen::OnChangeMacAddress(UI::EventParams &e) {
 
 UI::EventReturn GameSettingsScreen::OnCombo_key(UI::EventParams &e) {
 	screenManager()->push(new Combo_keyScreen(&g_Config.iComboMode));
+	return UI::EVENT_DONE;
+}
+
+UI::EventReturn GameSettingsScreen::OnRapid(UI::EventParams &e) {
+	g_Config.bRapid = false;
 	return UI::EVENT_DONE;
 }
 
