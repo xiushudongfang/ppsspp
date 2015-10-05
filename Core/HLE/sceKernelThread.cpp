@@ -41,6 +41,7 @@
 #include "Core/HLE/sceKernelModule.h"
 #include "Core/HLE/sceKernelInterrupt.h"
 #include "Core/HLE/KernelWaitHelpers.h"
+#include "Core/Config.h"
 
 typedef struct
 {
@@ -401,7 +402,10 @@ public:
 		}
 		else
 		{
-			currentStack.start = userMemory.Alloc(stackSize, fromTop, (std::string("stack/") + nt.name).c_str());
+			if (g_Config.iHack == 1)
+				currentStack.start = userMemory.Alloc(stackSize, true, (std::string("stack/") + nt.name).c_str());
+			else
+				currentStack.start = userMemory.Alloc(stackSize, fromTop, (std::string("stack/") + nt.name).c_str());
 		}
 		if (currentStack.start == (u32)-1)
 		{

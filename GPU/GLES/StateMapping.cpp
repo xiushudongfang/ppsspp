@@ -866,8 +866,15 @@ void TransformDrawEngine::ApplyDrawState(int prim) {
 
 		glstate.viewport.set(left, bottom, right - left, top - bottom);
 
-		float zScale = getFloat24(gstate.viewportz1) * (1.0f / 65535.0f);
-		float zOff = getFloat24(gstate.viewportz2) * (1.0f / 65535.0f);
+		float zScale, zOff;
+		if (g_Config.bDepthRangeHack){
+			zScale = getFloat24(gstate.viewportz1) / 65536.0f;
+			zOff = getFloat24(gstate.viewportz2) / 65536.0f;
+		}
+		else {
+			zScale = getFloat24(gstate.viewportz1) / 65535.0f;
+			zOff = getFloat24(gstate.viewportz2) / 65535.0f;
+		}
 		float depthRangeMin = zOff - zScale;
 		float depthRangeMax = zOff + zScale;
 		glstate.depthRange.set(depthRangeMin, depthRangeMax);
