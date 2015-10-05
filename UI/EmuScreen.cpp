@@ -17,16 +17,14 @@
 
 #include <algorithm>
 
-#include "android/app-android.h"
+#include "android/jni/app-android.h"
 #include "base/display.h"
 #include "base/logging.h"
 #include "base/timeutil.h"
 #include "profiler/profiler.h"
 
-#include "gfx_es2/glsl_program.h"
-#include "gfx_es2/gl_state.h"
+#include "gfx_es2/gpu_features.h"
 #include "gfx_es2/draw_text.h"
-#include "gfx_es2/fbo.h"
 
 #include "input/input_state.h"
 #include "ui/ui.h"
@@ -44,6 +42,7 @@
 #include "Core/System.h"
 #include "GPU/GPUState.h"
 #include "GPU/GPUInterface.h"
+#include "GPU/GLES/FBO.h"
 #include "GPU/GLES/Framebuffer.h"
 #include "Core/HLE/sceCtrl.h"
 #include "Core/HLE/sceDisplay.h"
@@ -255,8 +254,8 @@ void EmuScreen::sendMessage(const char *message, const char *value) {
 		if (saveStatePreview_) {
 			int curSlot = SaveState::GetCurrentSlot();
 			std::string fn;
-			if (SaveState::HasSaveInSlot(curSlot)) {
-				fn = SaveState::GenerateSaveSlotFilename(curSlot, "jpg");
+			if (SaveState::HasSaveInSlot(gamePath_, curSlot)) {
+				fn = SaveState::GenerateSaveSlotFilename(gamePath_, curSlot, "jpg");
 			}
 
 			saveStatePreview_->SetFilename(fn);
@@ -367,12 +366,10 @@ void EmuScreen::onVKeyDown(int virtualKeyCode) {
 		}
 		break;
 	case VIRTKEY_SAVE_STATE:
-		SaveState::SaveSlot(g_Config.iCurrentStateSlot, SaveState::Callback());
+		SaveState::SaveSlot(gamePath_, g_Config.iCurrentStateSlot, SaveState::Callback());
 		break;
 	case VIRTKEY_LOAD_STATE:
-		if (SaveState::HasSaveInSlot(g_Config.iCurrentStateSlot)) {
-			SaveState::LoadSlot(g_Config.iCurrentStateSlot, SaveState::Callback());
-		}
+		SaveState::LoadSlot(gamePath_, g_Config.iCurrentStateSlot, SaveState::Callback());
 		break;
 	case VIRTKEY_NEXT_SLOT:
 		SaveState::NextSlot();
@@ -925,20 +922,20 @@ void EmuScreen::render() {
 		screenManager()->getUIContext()->End();
 	}
 
-#ifdef USING_GLES2
 	// We have no use for backbuffer depth or stencil, so let tiled renderers discard them after tiling.
 	if (gl_extensions.GLES3 && glInvalidateFramebuffer != nullptr) {
 		GLenum attachments[2] = { GL_DEPTH, GL_STENCIL };
 		glInvalidateFramebuffer(GL_FRAMEBUFFER, 2, attachments);
 	} else if (!gl_extensions.GLES3) {
+#ifdef USING_GLES2
 		// Tiled renderers like PowerVR should benefit greatly from this. However - seems I can't call it?
 		bool hasDiscard = gl_extensions.EXT_discard_framebuffer;  // TODO
 		if (hasDiscard) {
 			//const GLenum targets[3] = { GL_COLOR_EXT, GL_DEPTH_EXT, GL_STENCIL_EXT };
 			//glDiscardFramebufferEXT(GL_FRAMEBUFFER, 3, targets);
 		}
-	}
 #endif
+	}
 }
 
 void EmuScreen::deviceLost() {
@@ -951,9 +948,9 @@ void EmuScreen::deviceLost() {
 
 void EmuScreen::autoLoad() {
 	//check if save state has save, if so, load
-	int lastSlot = SaveState::GetNewestSlot();
+	int lastSlot = SaveState::GetNewestSlot(gamePath_);
 	if (g_Config.bEnableAutoLoad && lastSlot != -1) {
-		SaveState::LoadSlot(lastSlot, SaveState::Callback(), 0);
+		SaveState::LoadSlot(gamePath_, lastSlot, SaveState::Callback(), 0);
 		g_Config.iCurrentStateSlot = lastSlot;
 	}
 }
