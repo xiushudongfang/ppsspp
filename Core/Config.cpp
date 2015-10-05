@@ -471,6 +471,7 @@ static ConfigSetting graphicsSettings[] = {
 	ReportedConfigSetting("AlphaMaskHack", &g_Config.bAlphaMaskHack, false, true, true),
 	ReportedConfigSetting("SplineBezierQuality", &g_Config.iSplineBezierQuality, 2, true, true),
 	ReportedConfigSetting("PostShader", &g_Config.sPostShaderName, "Off", true, true),
+	ReportedConfigSetting("Hack", &g_Config.iHack, 0, true, true),
 
 	ReportedConfigSetting("MemBlockTransferGPU", &g_Config.bBlockTransferGPU, true, true, true),
 	ReportedConfigSetting("DisableSlowFramebufEffects", &g_Config.bDisableSlowFramebufEffects, false, true, true),
@@ -537,6 +538,18 @@ static ConfigSetting controlSettings[] = {
 	ConfigSetting("ComboKey2", &g_Config.iCombokey2, 0, true, true),
 	ConfigSetting("ComboKey3", &g_Config.iCombokey3, 0, true, true),
 	ConfigSetting("ComboKey4", &g_Config.iCombokey4, 0, true, true),
+
+	ConfigSetting("ShowTouchDpadLEFT", &g_Config.bShowTouchDpad_LEFT, true, true, true),
+	ConfigSetting("ShowTouchDpadUP", &g_Config.bShowTouchDpad_UP, true, true, true),
+	ConfigSetting("ShowTouchDpadRIGHT", &g_Config.bShowTouchDpad_RIGHT, true, true, true),
+	ConfigSetting("ShowTouchDpadDOWN", &g_Config.bShowTouchDpad_DOWN, true, true, true),
+	ConfigSetting("ShowRapidKey", &g_Config.bShowRapidKey, false, true, true),
+	ConfigSetting("Button Separation", &g_Config.bActionButtonseparation, false, true, true),
+	ConfigSetting("Rapid", &g_Config.bRapid, false, true, true),
+	ConfigSetting("Rapid_Circle", &g_Config.bRapid_Circle, false, true, true),
+	ConfigSetting("Rapid_Square", &g_Config.bRapid_Square, false, true, true),
+	ConfigSetting("Rapid_Cross", &g_Config.bRapid_Cross, false, true, true),
+	ConfigSetting("Rapid_Circle", &g_Config.bRapid_Triangle, false, true, true),
 #if !defined(__SYMBIAN32__) && !defined(IOS) && !defined(MAEMO)
 #if defined(_WIN32)
 	// A win32 user seeing touch controls is likely using PPSSPP on a tablet. There it makes
@@ -615,6 +628,39 @@ static ConfigSetting controlSettings[] = {
 	ConfigSetting("fcombo4X", &g_Config.fcombo4X, -1.0f, true, true),
 	ConfigSetting("fcombo4Y", &g_Config.fcombo4Y, -1.0f, true, true),
 	ConfigSetting("comboKeyScale4", &g_Config.fcomboScale4, defaultControlScale, true, true),
+
+	ConfigSetting("CrossX", &g_Config.fCrossX, -1.0f, true, true),
+	ConfigSetting("CrossY", &g_Config.fCrossY, -1.0f, true, true),
+	ConfigSetting("CrossScale", &g_Config.fCrossScale, defaultControlScale, true, true),
+	ConfigSetting("CircleX", &g_Config.fCircleX, -1.0f, true, true),
+	ConfigSetting("CircleY", &g_Config.fCircleY, -1.0f, true, true),
+	ConfigSetting("CircleScale", &g_Config.fCircleScale, defaultControlScale, true, true),
+	ConfigSetting("TriangleX", &g_Config.fTriangleX, -1.0f, true, true),
+	ConfigSetting("TriangleY", &g_Config.fTriangleY, -1.0f, true, true),
+	ConfigSetting("TriangleScale", &g_Config.fTriangleScale, defaultControlScale, true, true),
+	ConfigSetting("SquareX", &g_Config.fSquareX, -1.0f, true, true),
+	ConfigSetting("SquareY", &g_Config.fSquareY, -1.0f, true, true),
+	ConfigSetting("SquareScale", &g_Config.fSquareScale, defaultControlScale, true, true),
+
+	ConfigSetting("Dpad_LEFTX", &g_Config.fDpad_LEFTX, 0.085, true, true),
+	ConfigSetting("Dpad_LEFTY", &g_Config.fDpad_LEFTY, 0.45, true, true),
+	ConfigSetting("Dpad_LEFTScale", &g_Config.fDpad_LEFTScale, defaultControlScale, true, true),
+
+	ConfigSetting("Dpad_UPX", &g_Config.fDpad_UPX, 0.15, true, true),
+	ConfigSetting("Dpad_UPY", &g_Config.fDpad_UPY, 0.35, true, true),
+	ConfigSetting("Dpad_UPScale", &g_Config.fDpad_UPScale, defaultControlScale, true, true),
+
+	ConfigSetting("Dpad_RIGHTX", &g_Config.fDpad_RIGHTX, 0.205, true, true),
+	ConfigSetting("Dpad_RIGHTY", &g_Config.fDpad_RIGHTY, 0.45, true, true),
+	ConfigSetting("Dpad_RIGHTScale", &g_Config.fDpad_RIGHTScale, defaultControlScale, true, true),
+
+	ConfigSetting("Dpad_DOWNX", &g_Config.fDpad_DOWNX, 0.15, true, true),
+	ConfigSetting("Dpad_DOWNY", &g_Config.fDpad_DOWNY, 0.55, true, true),
+	ConfigSetting("Dpad_DOWNScale", &g_Config.fDpad_DOWNScale, defaultControlScale, true, true),
+
+	ConfigSetting("RapidKeyX", &g_Config.fRapidKeyX, -1.0f, true, true),
+	ConfigSetting("RapidKeyY", &g_Config.fRapidKeyY, 0.55, true, true),
+	ConfigSetting("RapidKeyScale", &g_Config.fRapidKeyScale, defaultControlScale, true, true),
 #ifdef _WIN32
 	ConfigSetting("DInputAnalogDeadzone", &g_Config.fDInputAnalogDeadzone, 0.1f, true, true),
 	ConfigSetting("DInputAnalogInverseMode", &g_Config.iDInputAnalogInverseMode, 0, true, true),
@@ -879,6 +925,16 @@ void Config::Load(const char *iniFileName, const char *controllerIniFilename) {
 		fcombo3Y /= screen_height;
 		fcombo4X /= screen_width;
 		fcombo4Y /= screen_height;
+		fCrossX /= screen_width;
+		fCrossY /= screen_height;
+		fCircleX /= screen_width;
+		fCircleY /= screen_height;
+		fTriangleX /= screen_width;
+		fTriangleY /= screen_height;
+		fSquareX /= screen_width;
+		fSquareY /= screen_height;
+		fRapidKeyX /= screen_width;
+		fRapidKeyY /= screen_height;
 	}
 	
 	const char *gitVer = PPSSPP_GIT_VERSION;
@@ -1309,6 +1365,39 @@ void Config::ResetControlLayout() {
 	g_Config.fcombo4X = -1.0f;
 	g_Config.fcombo4Y = -1.0f;
 	g_Config.fcomboScale4 = defaultControlScale;
+
+	g_Config.fCrossX = -1.0f;
+	g_Config.fCrossY = -1.0f;
+	g_Config.fCrossScale = defaultControlScale;
+	g_Config.fCircleX = -1.0f;
+	g_Config.fCircleY = -1.0f;
+	g_Config.fCircleScale = defaultControlScale;
+	g_Config.fTriangleX = -1.0f;
+	g_Config.fTriangleY = -1.0f;
+	g_Config.fTriangleScale = defaultControlScale;
+	g_Config.fSquareX = -1.0f;
+	g_Config.fSquareY = -1.0f;
+	g_Config.fSquareScale = defaultControlScale;
+
+	g_Config.fDpad_LEFTX = 0.085;
+	g_Config.fDpad_LEFTY = 0.45;
+	g_Config.fDpad_LEFTScale = defaultControlScale;
+
+	g_Config.fDpad_UPX = 0.145;
+	g_Config.fDpad_UPY = 0.35;
+	g_Config.fDpad_UPScale = defaultControlScale;
+
+	g_Config.fDpad_RIGHTX = 0.205;
+	g_Config.fDpad_RIGHTY = 0.45;
+	g_Config.fDpad_RIGHTScale = defaultControlScale;
+
+	g_Config.fDpad_DOWNX = 0.145;
+	g_Config.fDpad_DOWNY = 0.55;
+	g_Config.fDpad_DOWNScale = defaultControlScale;
+
+	g_Config.fRapidKeyX = -1.0f;
+	g_Config.fRapidKeyY = -1.0f;
+	g_Config.fRapidKeyScale = defaultControlScale;
 }
 
 void Config::GetReportingInfo(UrlEncoder &data) {

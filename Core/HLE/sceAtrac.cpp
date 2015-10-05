@@ -1267,6 +1267,11 @@ static u32 sceAtracGetSecondBufferInfo(int atracID, u32 outposAddr, u32 outBytes
 		if (Memory::IsValidAddress(outBytesAddr) && atrac)
 			Memory::Write_U32(atrac->second.writableBytes, outBytesAddr);
 	}
+
+	if (g_Config.iHack == 2){
+		if (atrac->loopNum = -1)
+			atrac->loopNum = 0;
+	}
 	// TODO: Maybe don't write the above?
 	return ATRAC_ERROR_SECOND_BUFFER_NOT_NEEDED;
 }

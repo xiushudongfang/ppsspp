@@ -67,6 +67,7 @@ private:
 	UI::EventReturn OnTiltTypeChange(UI::EventParams &e);
 	UI::EventReturn OnTiltCustomize(UI::EventParams &e);
 	UI::EventReturn OnCombo_key(UI::EventParams &e);
+	UI::EventReturn OnRapid(UI::EventParams &e);
 
 	// Global settings handlers
 	UI::EventReturn OnLanguage(UI::EventParams &e);

@@ -55,7 +55,15 @@
 #define I_Y 44
 #define I_A 45
 #define I_B 46
+#define I_DIR_UP 47
+#define I_DIR_RIGHT 48
+#define I_DIR_DOWN 49
+#define I_DIR_LINE_UP 50
+#define I_DIR_LINE_RIGHT 51
+#define I_DIR_LINE_DOWN 52
+#define I_OPEN 53
+#define I_LOCK 54
 
 
 extern const Atlas ui_atlas;
-extern const AtlasImage ui_images[47];
+extern const AtlasImage ui_images[55];
