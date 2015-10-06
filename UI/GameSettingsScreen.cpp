@@ -293,7 +293,7 @@ void GameSettingsScreen::CreateViews() {
 
 	graphicsSettings->Add(new ItemHeader(gr->T("Hack Settings", "Hack Settings (these WILL cause glitches)")));
 	static const char *Hack[] = { "Off", "GE2_1.3", "Tenchu" };
-	graphicsSettings->Add(new PopupMultiChoice(&g_Config.iHack, gr->T("Hack"), Hack, 0, ARRAY_SIZE(Hack), gr, screenManager()));
+	graphicsSettings->Add(new PopupMultiChoice(&g_Config.iHack, gr->T("Hack"), Hack, 0, ARRAY_SIZE(Hack), gr->GetName(), screenManager()));
 	graphicsSettings->Add(new CheckBox(&g_Config.bTimerHack, gr->T("Timer Hack")));
 	CheckBox *alphaHack = graphicsSettings->Add(new CheckBox(&g_Config.bDisableAlphaTest, gr->T("Disable Alpha Test (PowerVR speedup)")));
 	alphaHack->OnClick.Handle(this, &GameSettingsScreen::OnShaderChange);
@@ -434,7 +434,7 @@ void GameSettingsScreen::CreateViews() {
 		style->SetEnabledPtr(&g_Config.bShowTouchControls);
 		//Combo Key style
 		static const char *ComboKeyStyles[] = { "ACG", "CV" };
-		View *combo_key_style = controlsSettings->Add(new PopupMultiChoice(&g_Config.iComboKeyStyle, co->T("Combo Key style"), ComboKeyStyles, 0, ARRAY_SIZE(ComboKeyStyles), co, screenManager()));
+		View *combo_key_style = controlsSettings->Add(new PopupMultiChoice(&g_Config.iComboKeyStyle, co->T("Combo Key style"), ComboKeyStyles, 0, ARRAY_SIZE(ComboKeyStyles), co->GetName(), screenManager()));
 		combo_key_style->SetEnabledPtr(&g_Config.bShowTouchControls);
 
 		controlsSettings->Add(new ItemHeader(co->T("Rapid Key Settings")));
