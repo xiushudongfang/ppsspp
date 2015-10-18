@@ -350,6 +350,7 @@ LOCAL_SRC_FILES := \
   $(SRC)/UI/CwCheatScreen.cpp \
   $(SRC)/UI/InstallZipScreen.cpp \
   $(SRC)/UI/ProfilerDraw.cpp \
+  $(SRC)/UI/ComboKeyMappingScreen.cpp \
   $(SRC)/UI/NativeApp.cpp
 
 ifneq ($(SKIPAPP),1)

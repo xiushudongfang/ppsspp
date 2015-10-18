@@ -863,6 +863,7 @@ set(NativeAppSource
 	UI/Store.cpp
 	UI/CwCheatScreen.cpp
 	UI/InstallZipScreen.cpp
+	UI/ComboKeyMappingScreen.cpp
 	UI/ProfilerDraw.cpp
 	UI/ui_atlas.cpp)
 if(ANDROID)
