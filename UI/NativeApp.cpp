@@ -920,6 +920,12 @@ void NativeMessageReceived(const char *message, const char *value) {
 	pendingMessage.msg = message;
 	pendingMessage.value = value;
 	pendingMessages.push_back(pendingMessage);
+
+	pendingMessages.push_back(pendingMessage);
+	if (pendingMessage.msg == "Enter an IP address :")
+		g_Config.proAdhocServer = pendingMessage.value;
+	if (pendingMessage.msg == "Enter a new PSP nickname")
+		g_Config.sNickName = pendingMessage.value;
 }
 
 void NativeResized() {

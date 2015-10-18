@@ -352,23 +352,58 @@ void TouchControlLayoutScreen::CreateViews() {
 	}
 
 	controls_.clear();
+	if (!g_Config.bActionButtonseparation){
+		PSPActionButtons *actionButtons = new PSPActionButtons(g_Config.fActionButtonCenterX, g_Config.fActionButtonCenterY, g_Config.fActionButtonScale, g_Config.fActionButtonSpacing);
+		actionButtons->setCircleVisibility(g_Config.bShowTouchCircle);
+		actionButtons->setCrossVisibility(g_Config.bShowTouchCross);
+		actionButtons->setTriangleVisibility(g_Config.bShowTouchTriangle);
+		actionButtons->setSquareVisibility(g_Config.bShowTouchSquare);
 
-	PSPActionButtons *actionButtons = new PSPActionButtons(g_Config.fActionButtonCenterX, g_Config.fActionButtonCenterY, g_Config.fActionButtonScale, g_Config.fActionButtonSpacing);
-	actionButtons->setCircleVisibility(g_Config.bShowTouchCircle);
-	actionButtons->setCrossVisibility(g_Config.bShowTouchCross);
-	actionButtons->setTriangleVisibility(g_Config.bShowTouchTriangle);
-	actionButtons->setSquareVisibility(g_Config.bShowTouchSquare);
-
-	controls_.push_back(actionButtons);
+		controls_.push_back(actionButtons);
+	}
 
 	int rectImage = g_Config.iTouchButtonStyle ? I_RECT_LINE : I_RECT;
 	int shoulderImage = g_Config.iTouchButtonStyle ? I_SHOULDER_LINE : I_SHOULDER;
 	int dirImage = g_Config.iTouchButtonStyle ? I_DIR_LINE : I_DIR;
 	int stickImage = g_Config.iTouchButtonStyle ? I_STICK_LINE : I_STICK;
 	int stickBg = g_Config.iTouchButtonStyle ? I_STICK_BG_LINE : I_STICK_BG;
+	int roundImage = g_Config.iTouchButtonStyle ? I_ROUND_LINE : I_ROUND;
+	int ComboKey1 = g_Config.iComboKeyStyle ? I_SQUARE1 : I_STAR;
+	int ComboKey2 = g_Config.iComboKeyStyle ? I_TRIANGLE1 : I_EYE;
+	int ComboKey3 = g_Config.iComboKeyStyle ? I_CROSS1 : I_GC;
+	int ComboKey4 = g_Config.iComboKeyStyle ? I_A : I_X;
+	int ComboKey5 = g_Config.iComboKeyStyle ? I_B : I_Y;
+	int dirImage_UP = g_Config.iTouchButtonStyle ? I_DIR_LINE_UP : I_DIR_UP;
+	int dirImage_RIGHT = g_Config.iTouchButtonStyle ? I_DIR_LINE_RIGHT : I_DIR_RIGHT;
+	int dirImage_DOWN = g_Config.iTouchButtonStyle ? I_DIR_LINE_DOWN : I_DIR_DOWN;
 
-	if (g_Config.bShowTouchDpad) {
-		controls_.push_back(new PSPDPadButtons(g_Config.fDpadX, g_Config.fDpadY, g_Config.fDpadScale, g_Config.fDpadSpacing));
+	if (g_Config.bActionButtonseparation)
+	{
+		if (g_Config.bShowTouchCircle)
+			controls_.push_back(new DragDropButton(g_Config.fCircleX, g_Config.fCircleY, roundImage, I_CIRCLE, g_Config.fCircleScale));
+		if (g_Config.bShowTouchCross)
+			controls_.push_back(new DragDropButton(g_Config.fCrossX, g_Config.fCrossY, roundImage, I_CROSS, g_Config.fCrossScale));
+		if (g_Config.bShowTouchTriangle)
+			controls_.push_back(new DragDropButton(g_Config.fTriangleX, g_Config.fTriangleY, roundImage, I_TRIANGLE, g_Config.fTriangleScale));
+		if (g_Config.bShowTouchSquare)
+			controls_.push_back(new DragDropButton(g_Config.fSquareX, g_Config.fSquareY, roundImage, I_SQUARE, g_Config.fSquareScale));
+	}
+
+	if (g_Config.bActionButtonseparation)
+	{
+		if (g_Config.bShowTouchDpad_LEFT)
+			controls_.push_back(new DragDropButton(g_Config.fDpad_LEFTX, g_Config.fDpad_LEFTY, dirImage, I_ARROW, g_Config.fDpad_LEFTScale));
+		if (g_Config.bShowTouchDpad_UP)
+			controls_.push_back(new DragDropButton(g_Config.fDpad_UPX, g_Config.fDpad_UPY, dirImage_UP, I_ARROW1, g_Config.fDpad_UPScale));
+		if (g_Config.bShowTouchDpad_RIGHT)
+			controls_.push_back(new DragDropButton(g_Config.fDpad_RIGHTX, g_Config.fDpad_RIGHTY, dirImage_RIGHT, I_ARROW2, g_Config.fDpad_RIGHTScale));
+		if (g_Config.bShowTouchDpad_DOWN)
+			controls_.push_back(new DragDropButton(g_Config.fDpad_DOWNX, g_Config.fDpad_DOWNY, dirImage_DOWN, I_ARROW3, g_Config.fDpad_DOWNScale));
+	}
+	else {
+		if (g_Config.bShowTouchDpad) {
+			controls_.push_back(new PSPDPadButtons(g_Config.fDpadX, g_Config.fDpadY, g_Config.fDpadScale, g_Config.fDpadSpacing));
+		}
 	}
 
 	if (g_Config.bShowTouchSelect) {
@@ -397,7 +432,25 @@ void TouchControlLayoutScreen::CreateViews() {
 
 	if (g_Config.bShowTouchAnalogStick) {
 		controls_.push_back(new DragDropButton(g_Config.fAnalogStickX, g_Config.fAnalogStickY, stickBg, stickImage, g_Config.fAnalogStickScale));
+	}
+	if (g_Config.bShowComboKey) {
+		controls_.push_back(new DragDropButton(g_Config.fcomboX, g_Config.fcomboY, roundImage, ComboKey1, g_Config.fcomboScale));
+	}
+
+	if (g_Config.bShowComboKey1) {
+		controls_.push_back(new DragDropButton(g_Config.fcombo1X, g_Config.fcombo1Y, roundImage, ComboKey2, g_Config.fcomboScale1));
+	}
+	if (g_Config.bShowComboKey2) {
+		controls_.push_back(new DragDropButton(g_Config.fcombo2X, g_Config.fcombo2Y, roundImage, ComboKey3, g_Config.fcomboScale2));
+	}
+	if (g_Config.bShowComboKey3) {
+		controls_.push_back(new DragDropButton(g_Config.fcombo3X, g_Config.fcombo3Y, roundImage, ComboKey4, g_Config.fcomboScale3));
+	}
+	if (g_Config.bShowComboKey4) {
+		controls_.push_back(new DragDropButton(g_Config.fcombo4X, g_Config.fcombo4Y, roundImage, ComboKey5, g_Config.fcomboScale4));
 	};
+	if (g_Config.bShowRapidKey)
+		controls_.push_back(new DragDropButton(g_Config.fRapidKeyX, g_Config.fRapidKeyY, roundImage, I_LOCK, g_Config.fRapidKeyScale));
 
 	for (size_t i = 0; i < controls_.size(); i++) {
 		root_->Add(controls_[i]);

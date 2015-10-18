@@ -186,6 +186,7 @@ public:
 	bool bAlwaysDepthWrite;
 	bool bDepthRangeHack;
 	int iBloomHack; //0 = off, 1 = safe, 2 = balanced, 3 = aggressive
+	int iHack;
 	bool bTimerHack;
 	bool bAlphaMaskHack;
 	bool bBlockTransferGPU;
@@ -231,28 +232,61 @@ public:
 	bool bGridView1;
 	bool bGridView2;
 	bool bGridView3;
+	//Combo key screen flag
+	int iComboMode;
 
 	// Disable diagonals
 	bool bDisableDpadDiagonals;
 	bool bGamepadOnlyFocused;
 	// Control Style
 	int iTouchButtonStyle;
+	//	Combo Button Style;
+	int iComboKeyStyle;
 	// Control Positions
 	int iTouchButtonOpacity;
 	// Floating analog stick (recenters on thumb on press).
 	bool bAutoCenterTouchAnalog;
+
+	//Onscreen RapidKey
+	bool bRapid;
+	bool bRapid_Circle;
+	bool bRapid_Cross;
+	bool bRapid_Triangle;
+	bool bRapid_Square;
+
+
+	//Button separation enable
+	bool bActionButtonseparation;
 
 	//space between PSP buttons
 	//the PSP button's center (triangle, circle, square, cross)
 	float fActionButtonCenterX, fActionButtonCenterY;
 	float fActionButtonScale;
 	float fActionButtonSpacing;
+
+	//Action Button separation position
+	float fCircleX, fCircleY, fCircleScale;
+	float fCrossX, fCrossY, fCrossScale;
+	float fTriangleX, fTriangleY, fTriangleScale;
+	float fSquareX, fSquareY, fSquareScale;
+
 	//radius of the D-pad (PSP cross)
 	// int iDpadRadius;
 	//the D-pad (PSP cross) position
 	float fDpadX, fDpadY;
 	float fDpadScale;
 	float fDpadSpacing;
+
+	// the D-pad separation position
+	float fDpad_LEFTX, fDpad_LEFTY;
+	float fDpad_LEFTScale;
+	float fDpad_UPX, fDpad_UPY;
+	float fDpad_UPScale;
+	float fDpad_RIGHTX, fDpad_RIGHTY;
+	float fDpad_RIGHTScale;
+	float fDpad_DOWNX, fDpad_DOWNY;
+	float fDpad_DOWNScale;
+
 	//the start key position
 	float fStartKeyX, fStartKeyY;
 	float fStartKeyScale;
@@ -273,6 +307,22 @@ public:
 	float fAnalogStickX, fAnalogStickY;
 	float fAnalogStickScale;
 
+	//the Combo Button position
+	float fcomboX, fcomboY;
+	float fcomboScale;
+	float fcombo1X, fcombo1Y;
+	float fcomboScale1;
+	float fcombo2X, fcombo2Y;
+	float fcomboScale2;
+	float fcombo3X, fcombo3Y;
+	float fcomboScale3;
+	float fcombo4X, fcombo4Y;
+	float fcomboScale4;
+
+	// Onscreen RapidKey position
+	float fRapidKeyX, fRapidKeyY;
+	float fRapidKeyScale;
+
 	// Controls Visibility
 	bool bShowTouchControls;
 
@@ -290,6 +340,28 @@ public:
 
 	bool bShowTouchAnalogStick;
 	bool bShowTouchDpad;
+
+	//Combo Button Visibility
+	bool bShowComboKey;
+	bool bShowComboKey1;
+	bool bShowComboKey2;
+	bool bShowComboKey3;
+	bool bShowComboKey4;
+	
+	// Button Separation Visibility
+	bool bShowTouchDpad_LEFT;
+	bool bShowTouchDpad_UP;
+	bool bShowTouchDpad_RIGHT;
+	bool bShowTouchDpad_DOWN;
+
+	bool bShowRapidKey;
+
+	//Combo_key mapping
+	int iCombokey;
+	int iCombokey1;
+	int iCombokey2;
+	int iCombokey3;
+	int iCombokey4;
 
 #if !defined(__SYMBIAN32__) && !defined(IOS) && !defined(MAEMO)
 	bool bShowTouchPause;

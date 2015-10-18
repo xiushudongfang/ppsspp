@@ -699,7 +699,7 @@ public class NativeActivity extends Activity {
 	}
 	
 	// The return value is sent elsewhere. TODO in java, in SendMessage in C++.
-	public void inputBox(String title, String defaultText, String defaultAction) {
+	public void inputBox(final String title, String defaultText, String defaultAction) {
     	final FrameLayout fl = new FrameLayout(this);
     	final EditText input = new EditText(this);
     	input.setGravity(Gravity.CENTER);
@@ -723,7 +723,7 @@ public class NativeActivity extends Activity {
     		.setTitle(title)
     		.setPositiveButton(defaultAction, new DialogInterface.OnClickListener(){
     			public void onClick(DialogInterface d, int which) {
-    	    		NativeApp.sendMessage("inputbox_completed", input.getText().toString());
+    	    		NativeApp.sendMessage(title, input.getText().toString());
     				d.dismiss();
     			}
     		})
@@ -829,13 +829,16 @@ public class NativeActivity extends Activity {
 					InputMethodManager.SHOW_FORCED, 0);
 			return true;
 		} else if (command.equals("inputbox")) {
-			String title = "Input";
+			String title = "";
 			String defString = "";
-			String[] param = params.split(":");
-			if (param[0].length() > 0)
-				title = param[0];
-			if (param.length > 1)
-				defString = param[1];
+			if (params.equals("Enter a new PSP nickname")){
+				 title = "Enter a new PSP nickname";
+				 defString = "";
+			}
+			else { 
+				title = "Enter an IP address :";
+				defString = params;
+			}
 			Log.i(TAG, "Launching inputbox: " + title + " " + defString);
 			inputBox(title, defString, "OK");
 			return true;

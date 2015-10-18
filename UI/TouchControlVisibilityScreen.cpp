@@ -51,6 +51,15 @@ void TouchControlVisibilityScreen::CreateViews() {
 	keyImages["Select"] = I_SELECT;
 	keyImages["L"] = I_L;
 	keyImages["R"] = I_R;
+	keyImages["Combo"] = g_Config.iComboKeyStyle ? I_SQUARE1 : I_STAR;
+	keyImages["Combo1"] = g_Config.iComboKeyStyle ? I_TRIANGLE1 : I_EYE;
+	keyImages["Combo2"] = g_Config.iComboKeyStyle ? I_CROSS1 : I_GC;
+	keyImages["Combo3"] = g_Config.iComboKeyStyle ? I_A : I_X;
+	keyImages["Combo4"] = g_Config.iComboKeyStyle ? I_B : I_Y;
+	keyImages["LEFT"] = I_ARROW;
+	keyImages["UP"] = I_ARROW1;
+	keyImages["RIGHT"] = I_ARROW2;
+	keyImages["DOWN"] = I_ARROW3;
 
 	keyToggles.clear();
 	keyToggles["Circle"] = &g_Config.bShowTouchCircle;
@@ -64,6 +73,15 @@ void TouchControlVisibilityScreen::CreateViews() {
 	keyToggles["Dpad"] = &g_Config.bShowTouchDpad;
 	keyToggles["Analog Stick"] = &g_Config.bShowTouchAnalogStick;
 	keyToggles["Unthrottle"] = &g_Config.bShowTouchUnthrottle;
+	keyToggles["Combo"] = &g_Config.bShowComboKey;
+	keyToggles["Combo1"] = &g_Config.bShowComboKey1;
+	keyToggles["Combo2"] = &g_Config.bShowComboKey2;
+	keyToggles["Combo3"] = &g_Config.bShowComboKey3;
+	keyToggles["Combo4"] = &g_Config.bShowComboKey4;
+	keyToggles["LEFT"] = &g_Config.bShowTouchDpad_LEFT;
+	keyToggles["UP"] = &g_Config.bShowTouchDpad_UP;
+	keyToggles["RIGHT"] = &g_Config.bShowTouchDpad_RIGHT;
+	keyToggles["DOWN"] = &g_Config.bShowTouchDpad_DOWN;
 
 	std::map<std::string, int>::iterator imageFinder;
 

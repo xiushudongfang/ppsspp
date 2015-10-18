@@ -39,15 +39,24 @@ public:
 	MultiTouchButton *FlipImageH(bool flip) { flipImageH_ = flip; return this; }
 	MultiTouchButton *SetAngle(float angle) { angle_ = angle; return this; }
 
-protected:
+//protected:
 	uint32_t pointerDownMask_;
 	float scale_;
 
-private:
+//private:
 	int bgImg_;
 	int img_;
 	float angle_;
 	bool flipImageH_;
+};
+
+class MultiTouchButton_ : public MultiTouchButton {
+public:
+	MultiTouchButton_(int bgImg, int img, float scale, UI::LayoutParams *layoutParams)
+		: MultiTouchButton(bgImg, img, scale, layoutParams) {
+	}
+	virtual void Draw(UIContext &dc);
+
 };
 
 class BoolButton : public MultiTouchButton {
@@ -131,3 +140,21 @@ UI::ViewGroup *CreatePadLayout(float xres, float yres, bool *pause);
 const int D_pad_Radius = 50;
 const int baseActionButtonSpacing = 60;
 
+class ComboKey : public MultiTouchButton {
+public:
+	ComboKey(int pspButtonBit, int bgImg, int img, float scale, UI::LayoutParams *layoutParams)
+		: MultiTouchButton(bgImg, img, scale, layoutParams), pspButtonBit_(pspButtonBit)  {
+	}
+	virtual void Touch(const TouchInput &input);
+private:
+	int pspButtonBit_;
+};
+
+class RapidKey : public MultiTouchButton_ {
+public:
+	RapidKey(int bgImg, int img, float scale, UI::LayoutParams *layoutParams)
+		: MultiTouchButton_(bgImg, img, scale, layoutParams) {
+
+	}
+	virtual void Touch(const TouchInput &input) override;
+};
