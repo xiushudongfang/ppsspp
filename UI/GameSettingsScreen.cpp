@@ -133,6 +133,11 @@ void GameSettingsScreen::CreateViews() {
 	graphicsSettings->SetSpacing(0);
 	graphicsSettingsScroll->Add(graphicsSettings);
 	tabHolder->AddTab(ms->T("Graphics"), graphicsSettingsScroll);
+	
+#if defined(ANDROID)
+	graphicsSettings->Add(new Choice(gr->T("Change Background")))->OnClick.Handle(this, &GameSettingsScreen::OnChangeBackGround);
+#endif
+
 
 	graphicsSettings->Add(new ItemHeader(gr->T("Rendering Mode")));
 #if defined(_WIN32)
@@ -945,6 +950,11 @@ UI::EventReturn GameSettingsScreen::OnChangeMacAddress(UI::EventParams &e) {
 
 UI::EventReturn GameSettingsScreen::OnCombo_key(UI::EventParams &e) {
 	screenManager()->push(new Combo_keyScreen(&g_Config.iComboMode));
+	return UI::EVENT_DONE;
+}
+
+UI::EventReturn GameSettingsScreen::OnChangeBackGround(UI::EventParams &e) {
+	System_SendMessage("SelectBackGround", "");
 	return UI::EVENT_DONE;
 }
 

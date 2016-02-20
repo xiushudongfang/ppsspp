@@ -1,6 +1,11 @@
 package org.ppsspp.ppsspp;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Locale;
@@ -19,6 +24,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Configuration;
+import android.database.Cursor;
 import android.graphics.Point;
 import android.media.AudioManager;
 import android.net.Uri;
@@ -26,6 +32,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Vibrator;
+import android.provider.MediaStore;
 import android.text.InputType;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -52,6 +59,7 @@ public class NativeActivity extends Activity implements SurfaceHolder.Callback {
 
 	// Adjust these as necessary
 	private static String TAG = "NativeActivity";
+	private static int RESULT_LOAD_IMAGE = 1;
 
 	// Allows us to skip a lot of initialization on secondary calls to onCreate.
 	private static boolean initialized = false;
@@ -529,6 +537,7 @@ public class NativeActivity extends Activity implements SurfaceHolder.Callback {
 
 		gainAudioFocus(this.audioManager, this.audioFocusChangeListener);
 		NativeApp.resume();
+		NativeApp.sendMessage("Resume" , "rebindtexture");
 
 		// Restart the render loop.
 		ensureRenderLoop();
@@ -839,6 +848,67 @@ public class NativeActivity extends Activity implements SurfaceHolder.Callback {
     	dlg.setCancelable(true);
     	dlg.show();
     }
+	
+	@Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+ 
+        if (requestCode == RESULT_LOAD_IMAGE && resultCode == RESULT_OK && null != data) {
+            Uri selectedImage = data.getData();
+            String[] filePathColumn = { MediaStore.Images.Media.DATA };
+
+            Cursor cursor = getContentResolver().query(selectedImage,
+                    filePathColumn, null, null, null);
+            cursor.moveToFirst();
+
+            int columnIndex = cursor.getColumnIndex(filePathColumn[0]);
+            String picturePath = cursor.getString(columnIndex);
+            cursor.close();
+            System.out.println(picturePath);
+            String dataDir = this.getFilesDir().getAbsolutePath();
+            String datafile = dataDir + "/" + "background.jpg";
+            System.out.println(datafile);
+            File fromFile =  new File(picturePath);
+            File toFile =  new File(datafile);
+            copyfile(fromFile , toFile , true);
+            }
+    }	
+	
+	public static void copyfile(File fromFile, File toFile,Boolean rewrite ){
+		
+		if(!fromFile.exists()){
+			return;
+		}
+		
+		if(!fromFile.isFile()){
+			return;
+		}
+		if(!fromFile.canRead()){
+			return;
+		}
+		if(!toFile.getParentFile().exists()){
+			toFile.getParentFile().mkdirs();
+		}
+		if(toFile.exists() && rewrite){
+			toFile.delete();
+		}
+				
+		try {
+			FileInputStream fosfrom = new FileInputStream(fromFile);
+			FileOutputStream fosto = new FileOutputStream(toFile);
+			
+			byte[] bt = new byte[1024];
+			int c;
+			while((c=fosfrom.read(bt)) > 0){
+				fosto.write(bt,0,c);
+			}
+			fosfrom.close();
+			fosto.close();	
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		
+	}
 
     public boolean processCommand(String command, String params) {
 		if (command.equals("launchBrowser")) {
@@ -866,6 +936,16 @@ public class NativeActivity extends Activity implements SurfaceHolder.Callback {
 				Log.e(TAG, e.toString());
 				return false;
 			}
+		} else if (command.equals("SelectBackGround")) {
+			try {
+				Intent i = new Intent(Intent.ACTION_PICK, 
+						android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI); 
+				startActivityForResult(i, RESULT_LOAD_IMAGE);
+				return true;
+			} catch (Exception e) {  // For example, android.content.ActivityNotFoundException
+				Log.e(TAG, e.toString());
+				return false;
+			}	
 		} else if (command.equals("sharejpeg")) {
 			try {
 				Intent share = new Intent(Intent.ACTION_SEND);

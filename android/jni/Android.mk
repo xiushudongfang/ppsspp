@@ -383,6 +383,7 @@ LOCAL_SRC_FILES := \
   $(SRC)/UI/InstallZipScreen.cpp \
   $(SRC)/UI/ProfilerDraw.cpp \
   $(SRC)/UI/NativeApp.cpp \
+  $(SRC)/UI/BackgroundTexture.cpp \
   $(SRC)/UI/ComboKeyMappingScreen.cpp
 
 ifneq ($(SKIPAPP),1)

@@ -89,6 +89,10 @@
 #include "UI/TiltEventProcessor.h"
 #include "UI/BackgroundAudio.h"
 
+#if defined(ANDROID)
+#include "UI/BackgroundTexture.h"
+#endif
+
 #if !defined(MOBILE_DEVICE)
 #include "Common/KeyMap.h"
 #endif
@@ -736,6 +740,12 @@ void HandleGlobalMessage(const std::string &msg, const std::string &value) {
 	if (msg == "inputDeviceConnected") {
 		KeyMap::NotifyPadConnected(value);
 	}
+	
+#if defined(ANDROID)
+	if (msg == "Resume") {
+		backgroundtexture.OnresumeFlag = true;
+	}
+#endif
 }
 
 void NativeUpdate(InputState &input) {

@@ -54,6 +54,7 @@
 #include "util/random/rng.h"
 
 #include "UI/ui_atlas.h"
+#include "UI/BackgroundTexture.h"
 
 static const int symbols[4] = {
 	I_CROSS,
@@ -93,7 +94,21 @@ void DrawBackground(UIContext &dc, float alpha = 1.0f) {
 	int img = I_BG;
 #endif
 
+#if defined(ANDROID)	
+	backgroundtexture.SetupTexture(dc);
+	if (!backgroundtexture.texture_)
+		ui_draw2d.DrawImageStretch(img, dc.GetBounds());
+	else {
+		dc.Flush();
+		dc.GetThin3DContext()->SetTexture(0, backgroundtexture.texture_);
+		uint32_t color = 0xFFFFFFFF;
+		dc.Draw()->DrawTexRect(dc.GetBounds(), 0, 0, 1, 1, color);
+		dc.Flush();
+		dc.RebindTexture();
+	}
+#else
 	ui_draw2d.DrawImageStretch(img, dc.GetBounds());
+#endif
 	float t = time_now();
 	for (int i = 0; i < 100; i++) {
 		float x = xbase[i] + dc.GetBounds().x;

@@ -884,6 +884,7 @@ set(NativeAppSource
 	UI/InstallZipScreen.cpp
 	UI/ProfilerDraw.cpp
 	UI/ui_atlas.cpp
+	UI/BackgroundTexture.cpp
 	UI/ComboKeyMappingScreen.cpp)
 if(ANDROID)
 	if (ARM)

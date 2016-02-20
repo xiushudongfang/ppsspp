@@ -66,6 +66,7 @@
       <Filter>Screens</Filter>
     </ClCompile>
     <ClCompile Include="DisplayLayoutEditor.cpp" />
+	<ClCompile Include="BackgroundTexture.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="GameInfoCache.h" />
@@ -132,6 +133,7 @@
       <Filter>Screens</Filter>
     </ClInclude>
     <ClInclude Include="DisplayLayoutEditor.h" />
+	<ClInclude Include="BackgroundTexture.h" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Screens">
