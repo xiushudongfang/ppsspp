@@ -534,6 +534,10 @@ void GameSettingsScreen::CreateViews() {
 		comboKey->OnClick.Handle(this, &GameSettingsScreen::OnComboKey);
 		comboKey->SetEnabledPtr(&g_Config.bShowTouchControls);
 
+		//Button separation setting
+		CheckBox *ActionButtonseparation = controlsSettings->Add(new CheckBox(&g_Config.bActionButtonseparation, co->T("Button separation")));
+		ActionButtonseparation->SetEnabledPtr(&g_Config.bShowTouchControls);
+
 		// On non iOS systems, offer to let the user see this button.
 		// Some Windows touch devices don't have a back button or other button to call up the menu.
 		if (System_GetPropertyBool(SYSPROP_HAS_BACK_BUTTON)) {

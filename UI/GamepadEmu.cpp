@@ -405,6 +405,19 @@ void InitPadLayout(float xres, float yres, float globalScale) {
 		g_Config.fActionButtonCenterY = (float)Action_button_center_Y / yres;
 	}
 
+	const float Action_button_scale_ = g_Config.fActionButtonScale;
+	const float Action_button_spacing_ = g_Config.fActionButtonSpacing * baseActionButtonSpacing;
+	float Action_button_center_X_ = g_Config.fActionButtonCenterX * xres;
+	float Action_button_center_Y_ = g_Config.fActionButtonCenterY * yres;
+	const float Action_circle_button_X_ = Action_button_center_X_ + Action_button_spacing_;
+	const float Action_circle_button_Y_ = Action_button_center_Y_;
+	const float Action_cross_button_X_ = Action_button_center_X_;
+	const float Action_cross_button_Y_ = Action_button_center_Y_ + Action_button_spacing_;
+	const float Action_triangle_button_X_ = Action_button_center_X_;
+	const float Action_triangle_button_Y_ = Action_button_center_Y_ - Action_button_spacing_;
+	const float Action_square_button_X_ = Action_button_center_X_ - Action_button_spacing_;
+	const float Action_square_button_Y_ = Action_button_center_Y_;
+
 	//D-PAD (up down left right) (aka PSP cross)----------------------------
 	//radius to the D-pad
 	// TODO: Make configurable
@@ -534,6 +547,41 @@ void InitPadLayout(float xres, float yres, float globalScale) {
 		g_Config.fcomboScale4 = scale;
 	}
 
+	int  Action_Cross_button_X = Action_cross_button_X_;
+	int  Action_Cross_button_Y = Action_cross_button_Y_;
+
+	if (g_Config.fCrossX == -1.0 || g_Config.fCircleY == -1.0) {
+		g_Config.fCrossX = (float)Action_Cross_button_X / xres;
+		g_Config.fCrossY = (float)Action_Cross_button_Y / yres;
+		g_Config.fCrossScale = scale;
+	}
+	int  Action_Circle_button_X = Action_circle_button_X_;
+	int  Action_Circle_button_Y = Action_circle_button_Y_;
+
+	if (g_Config.fCircleX == -1.0 || g_Config.fCircleY == -1.0) {
+		g_Config.fCircleX = (float)Action_Circle_button_X / xres;
+		g_Config.fCircleY = (float)Action_Circle_button_Y / yres;
+		g_Config.fCircleScale = scale;
+	}
+
+	int  Action_Triangle_button_X = Action_triangle_button_X_;
+	int  Action_Triangle_button_Y = Action_triangle_button_Y_;
+	
+	if (g_Config.fTriangleX == -1.0 || g_Config.fTriangleY == -1.0) {
+		g_Config.fTriangleX = (float)Action_Triangle_button_X / xres;
+		g_Config.fTriangleY = (float)Action_Triangle_button_Y / yres;
+		g_Config.fTriangleScale = scale;
+	}
+	
+	int  Action_Square_button_X = Action_square_button_X_;
+	int  Action_Square_button_Y = Action_square_button_Y_;
+	
+	if (g_Config.fSquareX == -1.0 || g_Config.fSquareY == -1.0) {
+		g_Config.fSquareX = (float)Action_Square_button_X / xres;
+		g_Config.fSquareY = (float)Action_Square_button_Y / yres;
+		g_Config.fSquareScale = scale;
+	}
+
 };
 
 UI::ViewGroup *CreatePadLayout(float xres, float yres, bool *pause) {
@@ -563,6 +611,19 @@ UI::ViewGroup *CreatePadLayout(float xres, float yres, bool *pause) {
 	const float Action_square_button_X = Action_button_center_X - Action_button_spacing;
 	const float Action_square_button_Y = Action_button_center_Y;
 
+	float Action_Cricle_button_X = g_Config.fCircleX * xres;
+	float Action_Cricle_button_Y = g_Config.fCircleY * yres;
+	float Action_Cricle_button_scale = g_Config.fCircleScale;
+	float Action_Cross_button_X = g_Config.fCrossX * xres;
+	float Action_Cross_button_Y = g_Config.fCrossY * yres;
+	float Action_Cross_button_scale = g_Config.fCrossScale;
+	float Action_Triangle_button_X = g_Config.fTriangleX * xres;
+	float Action_Triangle_button_Y = g_Config.fTriangleY * yres;
+	float Action_Triangle_button_scale = g_Config.fTriangleScale;
+	float Action_Square_button_X = g_Config.fSquareX * xres;
+	float Action_Square_button_Y = g_Config.fSquareY * yres;
+	float Action_Square_button_scale = g_Config.fSquareScale;
+
 	//D-PAD (up down left right) (aka PSP cross)--------------------------------------------------------------
 	//radius to the D-pad
 
@@ -570,6 +631,19 @@ UI::ViewGroup *CreatePadLayout(float xres, float yres, bool *pause) {
 	float D_pad_Y = g_Config.fDpadY * yres;
 	float D_pad_scale = g_Config.fDpadScale;
 	float D_pad_spacing = g_Config.fDpadSpacing;
+
+	float D_pad_LEFTX = g_Config.fDpad_LEFTX * xres;
+	float D_pad_LEFTY = g_Config.fDpad_LEFTY * yres;
+	float D_pad_LEFTscale = g_Config.fDpad_LEFTScale;
+	float D_pad_UPX = g_Config.fDpad_UPX * xres;
+	float D_pad_UPY = g_Config.fDpad_UPY * yres;
+	float D_pad_UPscale = g_Config.fDpad_UPScale;
+	float D_pad_RIGHTX = g_Config.fDpad_RIGHTX * xres;
+	float D_pad_RIGHTY = g_Config.fDpad_RIGHTY * yres;
+	float D_pad_RIGHTscale = g_Config.fDpad_RIGHTScale;
+	float D_pad_DOWNX = g_Config.fDpad_DOWNX * xres;
+	float D_pad_DOWNY = g_Config.fDpad_DOWNY * yres;
+	float D_pad_DOWNscale = g_Config.fDpad_DOWNScale;
 
 	//select, start, throttle--------------------------------------------
 	//space between the bottom keys (space between select, start and un-throttle)
@@ -628,21 +702,40 @@ UI::ViewGroup *CreatePadLayout(float xres, float yres, bool *pause) {
 		const int stickBg = g_Config.iTouchButtonStyle ? I_STICK_BG_LINE : I_STICK_BG;
 		static const int comboKeyImages[5] = { I_1, I_2, I_3, I_4, I_5 };
 
+		int dirImage_UP = g_Config.iTouchButtonStyle ? I_DIR_LINE_UP : I_DIR_UP;
+		int dirImage_RIGHT = g_Config.iTouchButtonStyle ? I_DIR_LINE_RIGHT : I_DIR_RIGHT;
+		int dirImage_DOWN = g_Config.iTouchButtonStyle ? I_DIR_LINE_DOWN : I_DIR_DOWN;
+
+
 		if (!System_GetPropertyBool(SYSPROP_HAS_BACK_BUTTON) || g_Config.bShowTouchPause) {
 			root->Add(new BoolButton(pause, roundImage, I_ARROW, 1.0f, new AnchorLayoutParams(halfW, 20, NONE, NONE, true)))->SetAngle(90);
 		}
+		if (!g_Config.bActionButtonseparation) {
+			if (g_Config.bShowTouchCircle)
+				root->Add(new PSPButton(CTRL_CIRCLE, roundImage, I_CIRCLE, Action_button_scale, new AnchorLayoutParams(Action_circle_button_X, Action_circle_button_Y, NONE, NONE, true)));
 
-		if (g_Config.bShowTouchCircle)
-			root->Add(new PSPButton(CTRL_CIRCLE, roundImage, I_CIRCLE, Action_button_scale, new AnchorLayoutParams(Action_circle_button_X, Action_circle_button_Y, NONE, NONE, true)));
+			if (g_Config.bShowTouchCross)
+				root->Add(new PSPButton(CTRL_CROSS, roundImage, I_CROSS, Action_button_scale, new AnchorLayoutParams(Action_cross_button_X, Action_cross_button_Y, NONE, NONE, true)));
 
-		if (g_Config.bShowTouchCross)
-			root->Add(new PSPButton(CTRL_CROSS, roundImage, I_CROSS, Action_button_scale, new AnchorLayoutParams(Action_cross_button_X, Action_cross_button_Y, NONE, NONE, true)));
+			if (g_Config.bShowTouchTriangle)
+				root->Add(new PSPButton(CTRL_TRIANGLE, roundImage, I_TRIANGLE, Action_button_scale, new AnchorLayoutParams(Action_triangle_button_X, Action_triangle_button_Y, NONE, NONE, true)));
 
-		if (g_Config.bShowTouchTriangle)
-			root->Add(new PSPButton(CTRL_TRIANGLE, roundImage, I_TRIANGLE, Action_button_scale, new AnchorLayoutParams(Action_triangle_button_X, Action_triangle_button_Y, NONE, NONE, true)));
+			if (g_Config.bShowTouchSquare)
+				root->Add(new PSPButton(CTRL_SQUARE, roundImage, I_SQUARE, Action_button_scale, new AnchorLayoutParams(Action_square_button_X, Action_square_button_Y, NONE, NONE, true)));
+		}
+		else {
+			if (g_Config.bShowTouchCircle)
+				root->Add(new PSPButton(CTRL_CIRCLE, roundImage, I_CIRCLE, Action_Cricle_button_scale, new AnchorLayoutParams(Action_Cricle_button_X, Action_Cricle_button_Y, NONE, NONE, true)));
 
-		if (g_Config.bShowTouchSquare)
-			root->Add(new PSPButton(CTRL_SQUARE, roundImage, I_SQUARE, Action_button_scale, new AnchorLayoutParams(Action_square_button_X, Action_square_button_Y, NONE, NONE, true)));
+			if (g_Config.bShowTouchCross)
+				root->Add(new PSPButton(CTRL_CROSS, roundImage, I_CROSS, Action_Cross_button_scale, new AnchorLayoutParams(Action_Cross_button_X, Action_Cross_button_Y, NONE, NONE, true)));
+
+			if (g_Config.bShowTouchTriangle)
+				root->Add(new PSPButton(CTRL_TRIANGLE, roundImage, I_TRIANGLE, Action_Triangle_button_scale, new AnchorLayoutParams(Action_Triangle_button_X, Action_Triangle_button_Y, NONE, NONE, true)));
+
+			if (g_Config.bShowTouchSquare)
+				root->Add(new PSPButton(CTRL_SQUARE, roundImage, I_SQUARE, Action_Square_button_scale, new AnchorLayoutParams(Action_Square_button_X, Action_Square_button_Y, NONE, NONE, true)));	
+		}
 
 		if (g_Config.bShowTouchStart)
 			root->Add(new PSPButton(CTRL_START, rectImage, I_START, start_key_scale, new AnchorLayoutParams(start_key_X, start_key_Y, NONE, NONE, true)));
@@ -659,8 +752,21 @@ UI::ViewGroup *CreatePadLayout(float xres, float yres, bool *pause) {
 		if (g_Config.bShowTouchRTrigger)
 			root->Add(new PSPButton(CTRL_RTRIGGER, shoulderImage, I_R, r_key_scale, new AnchorLayoutParams(r_key_X,r_key_Y, NONE, NONE, true)))->FlipImageH(true);
 
-		if (g_Config.bShowTouchDpad)
-			root->Add(new PSPDpad(dirImage, I_ARROW, D_pad_scale, D_pad_spacing, new AnchorLayoutParams(D_pad_X, D_pad_Y, NONE, NONE, true)));
+		if (g_Config.bActionButtonseparation)
+		{
+			if (g_Config.bShowTouchDpad_LEFT)
+				root->Add(new PSPButton(CTRL_LEFT, dirImage, I_ARROW, D_pad_LEFTscale, new AnchorLayoutParams(D_pad_LEFTX, D_pad_LEFTY, NONE, NONE, true)));
+			if (g_Config.bShowTouchDpad_UP)
+				root->Add(new PSPButton(CTRL_UP, dirImage_UP, I_ARROW1, D_pad_UPscale, new AnchorLayoutParams(D_pad_UPX, D_pad_UPY, NONE, NONE, true)));
+			if (g_Config.bShowTouchDpad_RIGHT)
+				root->Add(new PSPButton(CTRL_RIGHT, dirImage_RIGHT, I_ARROW2, D_pad_RIGHTscale, new AnchorLayoutParams(D_pad_RIGHTX, D_pad_RIGHTY, NONE, NONE, true)));
+			if (g_Config.bShowTouchDpad_DOWN)
+				root->Add(new PSPButton(CTRL_DOWN, dirImage_DOWN, I_ARROW3, D_pad_DOWNscale, new AnchorLayoutParams(D_pad_DOWNX, D_pad_DOWNY, NONE, NONE, true)));
+		}
+		else {
+			if (g_Config.bShowTouchDpad)
+				root->Add(new PSPDpad(dirImage, I_ARROW, D_pad_scale, D_pad_spacing, new AnchorLayoutParams(D_pad_X, D_pad_Y, NONE, NONE, true)));
+		}
 
 		if (g_Config.bShowTouchAnalogStick)
 			root->Add(new PSPStick(stickBg, stickImage, 0, analog_stick_scale, new AnchorLayoutParams(analog_stick_X, analog_stick_Y, NONE, NONE, true)));

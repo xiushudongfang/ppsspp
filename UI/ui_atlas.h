@@ -49,7 +49,16 @@
 #define I_5 38
 #define I_6 39
 #define I_PSP_DISPLAY 40
+#define I_DIR_UP 41
+#define I_DIR_RIGHT 42
+#define I_DIR_DOWN 43
+#define I_DIR_LINE_UP 44
+#define I_DIR_LINE_RIGHT 45
+#define I_DIR_LINE_DOWN 46
+#define I_ARROW1 47
+#define I_ARROW2 48
+#define I_ARROW3 49
 
 
 extern const Atlas ui_atlas;
-extern const AtlasImage ui_images[41];
+extern const AtlasImage ui_images[50];

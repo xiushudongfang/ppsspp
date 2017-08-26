@@ -370,12 +370,37 @@ public:
 	bool bShowComboKey3;
 	bool bShowComboKey4;
 
+	// Button Separation Visibility
+	bool bShowTouchDpad_LEFT;
+	bool bShowTouchDpad_UP;
+	bool bShowTouchDpad_RIGHT;
+	bool bShowTouchDpad_DOWN;
+
 	// Combo_key mapping. These are bitfields.
 	int iCombokey0;
 	int iCombokey1;
 	int iCombokey2;
 	int iCombokey3;
 	int iCombokey4;
+
+	//Button separation enable
+	bool bActionButtonseparation;
+
+	//Action Button separation position
+	float fCircleX, fCircleY, fCircleScale;
+	float fCrossX, fCrossY, fCrossScale;
+	float fTriangleX, fTriangleY, fTriangleScale;
+	float fSquareX, fSquareY, fSquareScale;
+
+	// the D-pad separation position
+	float fDpad_LEFTX, fDpad_LEFTY;
+	float fDpad_LEFTScale;
+	float fDpad_UPX, fDpad_UPY;
+	float fDpad_UPScale;
+	float fDpad_RIGHTX, fDpad_RIGHTY;
+	float fDpad_RIGHTScale;
+	float fDpad_DOWNX, fDpad_DOWNY;
+	float fDpad_DOWNScale;
 
 	// Ignored on iOS and other platforms that lack pause.
 	bool bShowTouchPause;

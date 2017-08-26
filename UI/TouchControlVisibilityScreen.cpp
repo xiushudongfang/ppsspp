@@ -74,6 +74,10 @@ void TouchControlVisibilityScreen::CreateViews() {
 	keyToggles["Combo2"] = &g_Config.bShowComboKey2;
 	keyToggles["Combo3"] = &g_Config.bShowComboKey3;
 	keyToggles["Combo4"] = &g_Config.bShowComboKey4;
+	keyToggles["LEFT"] = &g_Config.bShowTouchDpad_LEFT;
+	keyToggles["UP"] = &g_Config.bShowTouchDpad_UP;
+	keyToggles["RIGHT"] = &g_Config.bShowTouchDpad_RIGHT;
+	keyToggles["DOWN"] = &g_Config.bShowTouchDpad_DOWN;
 
 	std::map<std::string, int>::iterator imageFinder;
 

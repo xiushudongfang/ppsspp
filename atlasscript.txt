@@ -1,6 +1,6 @@
 2048
 font UBUNTU24 assets/Roboto-Condensed.ttf UWER 34 -2
-font UBUNTU24 C:/Windows/Fonts/ARIALUNI.ttf UWEhkcRGHKVTe 30 0
+font UBUNTU24 ARIALUNI.ttf UWEhkcRGHKVTe 30 0
 image I_SOLIDWHITE white.png copy
 image I_CROSS source_assets/image/cross.png copy
 image I_CIRCLE source_assets/image/circle.png copy
@@ -42,3 +42,12 @@ image I_4 source_assets/image/4.png copy
 image I_5 source_assets/image/5.png copy
 image I_6 source_assets/image/6.png copy
 image I_PSP_DISPLAY source_assets/image/psp_display.png copy
+image I_DIR_UP source_assets/image/dir_up.png copy
+image I_DIR_RIGHT source_assets/image/dir_right.png copy
+image I_DIR_DOWN source_assets/image/dir_down.png copy
+image I_DIR_LINE_UP source_assets/image/dir_line_up.png copy
+image I_DIR_LINE_RIGHT source_assets/image/dir_line_right.png copy
+image I_DIR_LINE_DOWN source_assets/image/dir_line_down.png copy
+image I_ARROW1 source_assets/image/arrow1.png copy
+image I_ARROW2 source_assets/image/arrow2.png copy
+image I_ARROW3 source_assets/image/arrow3.png copy
