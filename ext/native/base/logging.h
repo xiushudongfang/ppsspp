@@ -4,7 +4,6 @@
 
 #include "base/arch.h"
 #include "base/backtrace.h"
-#include "base/compat.h"
 
 // Simple wrapper around Android's logging interface that also allows other
 // implementations, and also some misc utilities.
@@ -54,7 +53,7 @@ void OutputDebugStringUTF8(const char *p);
 
 // Must only be used for logging
 #ifndef APP_NAME
-#define APP_NAME "NativeApp"
+#define APP_NAME "PPSSPP"
 #endif
 
 #ifdef _DEBUG
@@ -66,7 +65,7 @@ void OutputDebugStringUTF8(const char *p);
 #define ILOG(...)    __android_log_print(ANDROID_LOG_INFO, APP_NAME, __VA_ARGS__);
 #define WLOG(...)    __android_log_print(ANDROID_LOG_WARN, APP_NAME, __VA_ARGS__);
 #define ELOG(...)    __android_log_print(ANDROID_LOG_ERROR, APP_NAME, __VA_ARGS__);
-#define FLOG(...)   { __android_log_print(ANDROID_LOG_ERROR, APP_NAME, __VA_ARGS__); Crash(); }
+#define FLOG(...)    __android_log_print(ANDROID_LOG_FATAL, APP_NAME, __VA_ARGS__);
 
 #define MessageBox(a, b, c, d) __android_log_print(ANDROID_LOG_INFO, APP_NAME, "%s %s", (b), (c));
 
@@ -89,6 +88,8 @@ const char *GetFn(const char *fn);
 		OutputDebugStringUTF8(temp); \
 	} \
 } while (false)
+
+#define DUMPLOG(x) OutputDebugStringUTF8(x)
 
 #ifdef _DEBUG
 #define DLOG(...) XLOG_IMPL("D", __VA_ARGS__)

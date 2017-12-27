@@ -1,10 +1,5 @@
 package org.ppsspp.ppsspp;
 
-import java.io.File;
-import java.lang.reflect.Field;
-import java.util.List;
-import java.util.Locale;
-
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
@@ -24,7 +19,6 @@ import android.content.res.Configuration;
 import android.database.Cursor;
 import android.graphics.PixelFormat;
 import android.graphics.Point;
-import android.graphics.Rect;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
@@ -38,10 +32,10 @@ import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Display;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.InputDevice;
 import android.view.InputEvent;
 import android.view.KeyEvent;
-import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
@@ -55,11 +49,16 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 
+import java.io.File;
+import java.lang.reflect.Field;
+import java.util.List;
+import java.util.Locale;
+
 public abstract class NativeActivity extends Activity implements SurfaceHolder.Callback {
 	// Remember to loadLibrary your JNI .so in a static {} block
 
 	// Adjust these as necessary
-	private static String TAG = "NativeActivity";
+	private static String TAG = "PPSSPPNativeActivity";
 
 	// Allows us to skip a lot of initialization on secondary calls to onCreate.
 	private static boolean initialized = false;
@@ -108,10 +107,28 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 	private InputDeviceState inputPlayerC;
 	private String inputPlayerADesc;
 
+	private static LocationHelper mLocationHelper;
+	private static CameraHelper mCameraHelper;
+
 	private float densityDpi;
 	private float refreshRate;
 	private int pixelWidth;
 	private int pixelHeight;
+
+	private static final String[] permissionsForStorage = {
+			Manifest.permission.WRITE_EXTERNAL_STORAGE
+	};
+	private static final String[] permissionsForLocation = {
+			Manifest.permission.ACCESS_FINE_LOCATION,
+			Manifest.permission.ACCESS_COARSE_LOCATION
+	};
+	private static final String[] permissionsForCamera = {
+			Manifest.permission.CAMERA
+	};
+
+	public static final int REQUEST_CODE_STORAGE_PERMISSION = 1;
+	public static final int REQUEST_CODE_LOCATION_PERMISSION = 2;
+	public static final int REQUEST_CODE_CAMERA_PERMISSION = 3;
 
 	// Functions for the app activity to override to change behaviour.
 
@@ -158,18 +175,20 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 	    return libdir;
 	}
 
-	public static final int REQUEST_CODE_STORAGE_PERMISSION = 1337;
-
 	@TargetApi(23)
-	public void askForStoragePermission() {
+	boolean askForPermissions(String[] permissions, int requestCode) {
+		boolean shouldAsk = false;
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-			if (this.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-				NativeApp.sendMessage("permission_pending", "storage");
-				this.requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQUEST_CODE_STORAGE_PERMISSION);
-			} else {
-				NativeApp.sendMessage("permission_granted", "storage");
+			for (String permission : permissions) {
+				if (this.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
+					shouldAsk = true;
+				}
+			}
+			if (shouldAsk) {
+				this.requestPermissions(permissions, requestCode);
 			}
 		}
+		return shouldAsk;
 	}
 
 	@TargetApi(23)
@@ -178,17 +197,42 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			// Let's start out granted if it was granted already.
 			if (this.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
 				NativeApp.sendMessage("permission_granted", "storage");
+			} else {
+				NativeApp.sendMessage("permission_denied", "storage");
 			}
 		}
+	}
+
+	boolean permissionsGranted(String[] permissions, int[] grantResults) {
+		for (int i = 0; i < permissions.length; i++) {
+			if (grantResults[i] != PackageManager.PERMISSION_GRANTED)
+				return false;
+		}
+		return true;
 	}
 
 	@Override
 	public void onRequestPermissionsResult(int requestCode,
 	        String permissions[], int[] grantResults) {
-		if (requestCode == REQUEST_CODE_STORAGE_PERMISSION && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-			NativeApp.sendMessage("permission_granted", "storage");
-		} else {
-			NativeApp.sendMessage("permission_denied", "storage");
+		switch (requestCode) {
+			case REQUEST_CODE_STORAGE_PERMISSION:
+				if (permissionsGranted(permissions, grantResults)) {
+					NativeApp.sendMessage("permission_granted", "storage");
+				} else {
+					NativeApp.sendMessage("permission_denied", "storage");
+				}
+				break;
+			case REQUEST_CODE_LOCATION_PERMISSION:
+				if (permissionsGranted(permissions, grantResults)) {
+					mLocationHelper.startLocationUpdates();
+				}
+				break;
+			case REQUEST_CODE_CAMERA_PERMISSION:
+				if (mCameraHelper != null && permissionsGranted(permissions, grantResults)) {
+					mCameraHelper.startCamera();
+				}
+				break;
+			default:
 		}
 	}
 
@@ -244,6 +288,8 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 		// All other device types are treated the same.
 		}
 
+
+
 	    isXperiaPlay = IsXperiaPlay();
 
 		String libraryDir = getApplicationLibraryDir(appInfo);
@@ -268,7 +314,7 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 
 		// OK, config should be initialized, we can query for screen rotation.
 		if (Build.VERSION.SDK_INT >= 9) {
-			updateScreenRotation();
+			updateScreenRotation("Initialize");
 		}
 
 	    // Detect OpenGL support.
@@ -288,6 +334,12 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
         if (Build.VERSION.SDK_INT >= 11) {
         	checkForVibrator();
         }
+
+		mLocationHelper = new LocationHelper(this);
+        if (Build.VERSION.SDK_INT >= 11) {
+        	// android.graphics.SurfaceTexture is not available before version 11.
+			mCameraHelper = new CameraHelper(this);
+		}
 	}
 
 	@TargetApi(24)
@@ -307,7 +359,7 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 	}
 
 	@TargetApi(9)
-	private void updateScreenRotation() {
+	private void updateScreenRotation(String cause) {
 		// Query the native application on the desired rotation.
 		int rot = 0;
 		String rotString = NativeApp.queryConfig("screenRotation");
@@ -317,11 +369,12 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			Log.e(TAG, "Invalid rotation: " + rotString);
 			return;
 		}
-		Log.i(TAG, "Setting requested rotation: " + rot + " ('" + rotString + "')");
+		Log.i(TAG, "Setting requested rotation: " + rot + " ('" + rotString + "') (" + cause + ")");
 
 		switch (rot) {
 		case 0:
-			setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+			// Auto is no longer supported.
+			setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
 			break;
 		case 1:
 			setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
@@ -379,7 +432,7 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			// Start emulation using the provided Surface.
 			if (!runEGLRenderLoop(mSurface)) {
 				// Shouldn't happen.
-				Log.e(TAG, "Failed to start up OpenGL");
+				Log.e(TAG, "Failed to start up OpenGL/Vulkan");
 			}
 			Log.i(TAG, "Left the render loop: " + mSurface);
 		}
@@ -402,19 +455,23 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 		shuttingDown = false;
 		registerCallbacks();
 
-		if (!initialized) {
-			Initialize();
-			initialized = true;
-		}
-
 		Display display = getWindowManager().getDefaultDisplay();
 		DisplayMetrics metrics = new DisplayMetrics();
 		display.getMetrics(metrics);
 		densityDpi = metrics.densityDpi;
 		refreshRate = display.getRefreshRate();
 
+		// Set early to be able to set defaults when loading config for the first time. Like figuring out
+		// whether to start at 1x or 2x.
+		NativeApp.setDisplayParameters(metrics.widthPixels, metrics.heightPixels, (int)densityDpi, refreshRate);
+
+		if (!initialized) {
+			Initialize();
+			initialized = true;
+		}
+
 		// OK, config should be initialized, we can query for screen rotation.
-		updateScreenRotation();
+		updateScreenRotation("onCreate");
 		updateSustainedPerformanceMode();
 
 		// Keep the screen bright - very annoying if it goes dark when tilting away
@@ -470,24 +527,44 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
         }
     }
 
+	private Point desiredSize = new Point();
+	private int badOrientationCount = 0;
 	@Override
 	public void surfaceCreated(SurfaceHolder holder) {
 		pixelWidth = holder.getSurfaceFrame().width();
 		pixelHeight = holder.getSurfaceFrame().height();
-		Log.d(TAG, "Surface created. pixelWidth=" + pixelWidth + ", pixelHeight=" + pixelHeight);
-		NativeApp.setDisplayParameters(pixelWidth, pixelHeight, (int)densityDpi, refreshRate);
-		Point sz = new Point();
-		getDesiredBackbufferSize(sz);
-		Log.d(TAG, "Setting fixed size " + sz.x + " x " + sz.y);
-		if (mGLSurfaceView != null) {
-			mGLSurfaceView.getHolder().setFixedSize(sz.x, sz.y);
-		} else {
-			mSurfaceView.getHolder().setFixedSize(sz.x, sz.y);
+
+		// Workaround for terrible bug when locking and unlocking the screen in landscape mode on Nexus 5X.
+		int requestedOr = getRequestedOrientation();
+		boolean requestedPortrait = requestedOr == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT || requestedOr == ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT;
+		boolean detectedPortrait = pixelHeight > pixelWidth;
+		if (badOrientationCount < 3 && requestedPortrait != detectedPortrait) {
+			Log.e(TAG, "Bad orientation detected (w=" + pixelWidth + " h=" + pixelHeight + "! Recreating activity.");
+			badOrientationCount++;
+			recreate();
+			return;
+		} else if (requestedPortrait == detectedPortrait) {
+			badOrientationCount = 0;
 		}
+
+		Log.d(TAG, "Surface created. pixelWidth=" + pixelWidth + ", pixelHeight=" + pixelHeight + " holder: " + holder.toString() + " or: " + requestedOr);
+		NativeApp.setDisplayParameters(pixelWidth, pixelHeight, (int)densityDpi, refreshRate);
+		getDesiredBackbufferSize(desiredSize);
+
+		// Note that desiredSize might be 0,0 here - but that's fine when calling setFixedSize! It means auto.
+		Log.d(TAG, "Setting fixed size " + desiredSize.x + " x " + desiredSize.y);
+		holder.setFixedSize(desiredSize.x, desiredSize.y);
 	}
 
 	@Override
 	public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+		Log.v(TAG, "surfaceChanged: isCreating:" + holder.isCreating() + " holder: " + holder.toString());
+		if (holder.isCreating() && desiredSize.x > 0 && desiredSize.y > 0) {
+			// We have called setFixedSize which will trigger another surfaceChanged after the initial one. This one is the original one
+			// and we don't care about it.
+			Log.w(TAG, "holder.isCreating = true, ignoring. width=" + width + " height=" + height + " desWidth=" + desiredSize.x + " desHeight=" + desiredSize.y);
+			return;
+		}
 		Log.w(TAG, "Surface changed. Resolution: " + width + "x" + height + " Format: " + format);
 		NativeApp.backbufferResize(width, height, format);
 		mSurface = holder.getSurface();
@@ -574,6 +651,17 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 	protected void onDestroy() {
 		super.onDestroy();
 		if (javaGL) {
+			if (nativeRenderer.isRenderingFrame()) {
+				Log.i(TAG, "Waiting for renderer to finish.");
+				int tries = 200;
+				do {
+					try {
+						Thread.sleep(10);
+					} catch (InterruptedException e) {
+					}
+					tries--;
+				} while (nativeRenderer.isRenderingFrame() && tries > 0);
+			}
 			Log.i(TAG, "onDestroy");
 			mGLSurfaceView.onDestroy();
 			// Probably vain attempt to help the garbage collector...
@@ -584,6 +672,8 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			mSurfaceView.onDestroy();
 			mSurfaceView = null;
 		}
+		// TODO: Can we ensure that the GL thread has stopped rendering here?
+		// I've seen crashes that seem to indicate that sometimes it hasn't...
 		NativeApp.audioShutdown();
 		if (shuttingDown || isFinishing()) {
 			unregisterCallbacks();
@@ -599,10 +689,10 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 		loseAudioFocus(this.audioManager, this.audioFocusChangeListener);
 		NativeApp.pause();
 	    if (!javaGL) {
-			Log.i(TAG, "Pausing surface view");
 			mSurfaceView.onPause();
-			Log.i(TAG, "Joining render thread");
+			Log.i(TAG, "Joining render thread...");
 			joinRenderLoopThread();
+			Log.i(TAG, "Joined render thread");
 	    } else {
 			if (mGLSurfaceView != null) {
 				mGLSurfaceView.onPause();
@@ -633,7 +723,7 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
         }
 		// OK, config should be initialized, we can query for screen rotation.
 		if (javaGL || Build.VERSION.SDK_INT >= 9) {
-			updateScreenRotation();
+			updateScreenRotation("onResume");
 		}
 
 		Log.i(TAG, "onResume");
@@ -786,10 +876,10 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			return input.getDescriptor();
 		} else {
 			List<InputDevice.MotionRange> motions = input.getMotionRanges();
-			String fakeid = "";
+			StringBuilder fakeid = new StringBuilder();
 			for (InputDevice.MotionRange range : motions)
-				fakeid += range.getAxis();
-			return fakeid;
+				fakeid.append(range.getAxis());
+			return fakeid.toString();
 		}
 	}
 
@@ -916,18 +1006,38 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 	@TargetApi(11)
 	@SuppressWarnings("deprecation")
 	private AlertDialog.Builder createDialogBuilderWithTheme() {
-   		return new AlertDialog.Builder(this, AlertDialog.THEME_HOLO_DARK);
+		return new AlertDialog.Builder(this, AlertDialog.THEME_HOLO_DARK);
 	}
 
 	@TargetApi(14)
 	@SuppressWarnings("deprecation")
 	private AlertDialog.Builder createDialogBuilderWithDeviceTheme() {
-   		return new AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK);
+		return new AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK);
+	}
+
+	@TargetApi(17)
+	@SuppressWarnings("deprecation")
+	private AlertDialog.Builder createDialogBuilderWithDeviceThemeAndUiVisibility() {
+		AlertDialog.Builder bld = new AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK);
+		bld.setOnDismissListener(new DialogInterface.OnDismissListener() {
+			@Override
+			public void onDismiss(DialogInterface dialog) {
+				updateSystemUiVisibility();
+			}
+		});
+		return bld;
 	}
 
 	@TargetApi(23)
 	private AlertDialog.Builder createDialogBuilderNew() {
-		return new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+		AlertDialog.Builder bld = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+		bld.setOnDismissListener(new DialogInterface.OnDismissListener() {
+			@Override
+			public void onDismiss(DialogInterface dialog) {
+				updateSystemUiVisibility();
+			}
+		});
+		return bld;
 	}
 
 	// The return value is sent elsewhere. TODO in java, in SendMessage in C++.
@@ -944,16 +1054,18 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
     	input.setText(defaultText);
     	input.selectAll();
 
-    	// Lovely!
-    	AlertDialog.Builder bld = null;
-    	if (Build.VERSION.SDK_INT < Build.VERSION_CODES.HONEYCOMB)
-    		bld = new AlertDialog.Builder(this);
-    	else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.ICE_CREAM_SANDWICH)
-    		bld = createDialogBuilderWithTheme();
-    	else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M)
-    		bld = createDialogBuilderWithDeviceTheme();
-    	else
-    		bld = createDialogBuilderNew();
+		// Lovely!
+		AlertDialog.Builder bld;
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.HONEYCOMB)
+			bld = new AlertDialog.Builder(this);
+		else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.ICE_CREAM_SANDWICH)
+			bld = createDialogBuilderWithTheme();
+		else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1)
+			bld = createDialogBuilderWithDeviceTheme();
+		else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M)
+			bld = createDialogBuilderWithDeviceThemeAndUiVisibility();
+		else
+			bld = createDialogBuilderNew();
 
     	AlertDialog dlg = bld
     		.setView(fl)
@@ -1127,13 +1239,13 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			finish();
 		} else if (command.equals("rotate")) {
 			if (javaGL) {
-				updateScreenRotation();
+				updateScreenRotation("rotate");
 				if (Build.VERSION.SDK_INT < Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
 					Log.i(TAG, "Must recreate activity on rotation");
 				}
 			} else {
 				if (Build.VERSION.SDK_INT >= 9) {
-					updateScreenRotation();
+					updateScreenRotation("rotate");
 				}
 			}
 		} else if (command.equals("sustainedPerfMode")) {
@@ -1149,7 +1261,27 @@ public abstract class NativeActivity extends Activity implements SurfaceHolder.C
 			shuttingDown = true;
 			recreate();
 		} else if (command.equals("ask_permission") && params.equals("storage")) {
-			askForStoragePermission();
+			if (askForPermissions(permissionsForStorage, REQUEST_CODE_STORAGE_PERMISSION)) {
+				NativeApp.sendMessage("permission_pending", "storage");
+			} else {
+				NativeApp.sendMessage("permission_granted", "storage");
+			}
+		} else if (command.equals("gps_command")) {
+			if (params.equals("open")) {
+				if (!askForPermissions(permissionsForLocation, REQUEST_CODE_LOCATION_PERMISSION)) {
+					mLocationHelper.startLocationUpdates();
+				}
+			} else if (params.equals("close")) {
+				mLocationHelper.stopLocationUpdates();
+			}
+		} else if (command.equals("camera_command")) {
+			if (params.equals("startVideo")) {
+				if (mCameraHelper != null && !askForPermissions(permissionsForCamera, REQUEST_CODE_CAMERA_PERMISSION)) {
+					mCameraHelper.startCamera();
+				}
+			} else if (mCameraHelper != null && params.equals("stopVideo")) {
+				mCameraHelper.stopCamera();
+			}
 		}
     	return false;
     }

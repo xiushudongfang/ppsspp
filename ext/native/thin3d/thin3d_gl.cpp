@@ -3,6 +3,7 @@
 #include <string>
 #include <algorithm>
 #include <map>
+#include <cassert>
 
 #include "base/logging.h"
 #include "math/dataconv.h"
@@ -12,11 +13,18 @@
 #include "gfx/gl_debug_log.h"
 #include "gfx/GLStateCache.h"
 #include "gfx_es2/gpu_features.h"
-#include "gfx/gl_lost_manager.h"
 
 #ifdef IOS
 extern void bindDefaultFBO();
 #endif
+
+// #define DEBUG_READ_PIXELS 1
+
+// Workaround for Retroarch. Simply declare
+//   extern GLuint g_defaultFBO;
+// and set is as appropriate. Can adjust the variables in ext/native/base/display.h as
+// appropriate.
+GLuint g_defaultFBO = 0;
 
 namespace Draw {
 
@@ -157,11 +165,6 @@ static const unsigned short primToGL[] = {
 
 class OpenGLBuffer;
 
-static const char *glsl_fragment_prelude =
-"#ifdef GL_ES\n"
-"precision mediump float;\n"
-"#endif\n";
-
 class OpenGLBlendState : public BlendState {
 public:
 	bool enabled;
@@ -270,19 +273,15 @@ GLuint ShaderStageToOpenGL(ShaderStage stage) {
 	}
 }
 
-class OpenGLShaderModule : public ShaderModule, public GfxResourceHolder {
+class OpenGLShaderModule : public ShaderModule {
 public:
 	OpenGLShaderModule(ShaderStage stage) : stage_(stage) {
-		ILOG("Shader module created (%p)", this);
-		register_gl_resource_holder(this, "drawcontext_shader_module", 0);
 		glstage_ = ShaderStageToOpenGL(stage);
 	}
 
 	~OpenGLShaderModule() {
-		ILOG("Shader module destroyed (%p)", this);
 		if (shader_)
 			glDeleteShader(shader_);
-		unregister_gl_resource_holder(this);
 	}
 
 	bool Compile(ShaderLanguage language, const uint8_t *data, size_t dataSize);
@@ -296,19 +295,6 @@ public:
 	}
 	ShaderStage GetStage() const override {
 		return stage_;
-	}
-
-	void GLLost() override {
-		ILOG("Shader module lost");
-		// Shader has been destroyed since the old context is gone, so let's zero it.
-		shader_ = 0;
-	}
-
-	void GLRestore() override {
-		ILOG("Shader module being restored");
-		if (!Compile(language_, (const uint8_t *)source_.data(), source_.size())) {
-			ELOG("Shader restore compilation failed: %s", source_.c_str());
-		}
 	}
 
 private:
@@ -326,9 +312,9 @@ bool OpenGLShaderModule::Compile(ShaderLanguage language, const uint8_t *data, s
 	language_ = language;
 
 	std::string temp;
-	// Add the prelude on automatically for fragment shaders.
-	if (glstage_ == GL_FRAGMENT_SHADER) {
-		temp = std::string(glsl_fragment_prelude) + source_;
+	// Add the prelude on automatically.
+	if (glstage_ == GL_FRAGMENT_SHADER || glstage_ == GL_VERTEX_SHADER) {
+		temp = ApplyGLSLPrelude(source_, glstage_);
 		source_ = temp.c_str();
 	}
 
@@ -351,15 +337,13 @@ bool OpenGLShaderModule::Compile(ShaderLanguage language, const uint8_t *data, s
 	return ok_;
 }
 
-class OpenGLInputLayout : public InputLayout, GfxResourceHolder {
+class OpenGLInputLayout : public InputLayout {
 public:
 	~OpenGLInputLayout();
 
 	void Apply(const void *base = nullptr);
 	void Unapply();
 	void Compile();
-	void GLRestore() override;
-	void GLLost() override;
 	bool RequiresBuffer() {
 		return id_ != 0;
 	}
@@ -377,15 +361,12 @@ struct UniformInfo {
 	int loc_;
 };
 
-class OpenGLPipeline : public Pipeline, GfxResourceHolder {
+class OpenGLPipeline : public Pipeline {
 public:
 	OpenGLPipeline() {
 		program_ = 0;
-		// Priority 1 so this gets restored after the shaders.
-		register_gl_resource_holder(this, "drawcontext_pipeline", 1);
 	}
 	~OpenGLPipeline() {
-		unregister_gl_resource_holder(this);
 		for (auto &iter : shaders) {
 			iter->Release();
 		}
@@ -399,15 +380,6 @@ public:
 	bool LinkShaders();
 
 	int GetUniformLoc(const char *name);
-
-	void GLLost() override {
-		program_ = 0;
-	}
-
-	void GLRestore() override {
-		// Shaders will have been restored before the pipeline.
-		LinkShaders();
-	}
 
 	bool RequiresBuffer() override {
 		return inputLayout->RequiresBuffer();
@@ -464,12 +436,12 @@ public:
 
 	void CopyFramebufferImage(Framebuffer *src, int level, int x, int y, int z, Framebuffer *dst, int dstLevel, int dstX, int dstY, int dstZ, int width, int height, int depth, int channelBits) override;
 	bool BlitFramebuffer(Framebuffer *src, int srcX1, int srcY1, int srcX2, int srcY2, Framebuffer *dst, int dstX1, int dstY1, int dstX2, int dstY2, int channelBits, FBBlitFilter filter) override;
+	bool CopyFramebufferToMemorySync(Framebuffer *src, int channelBits, int x, int y, int w, int h, Draw::DataFormat format, void *pixels, int pixelStride) override;
 
 	// These functions should be self explanatory.
 	void BindFramebufferAsRenderTarget(Framebuffer *fbo, const RenderPassInfo &rp) override;
 	// color must be 0, for now.
 	void BindFramebufferAsTexture(Framebuffer *fbo, int binding, FBChannel channelBit, int attachment) override;
-	void BindFramebufferForRead(Framebuffer *fbo) override;
 
 	uintptr_t GetFramebufferAPITexture(Framebuffer *fbo, int channelBits, int attachment) override;
 
@@ -486,7 +458,12 @@ public:
 	}
 
 	void SetScissorRect(int left, int top, int width, int height) override {
-		glScissor(left, targetHeight_ - (top + height), width, height);
+		int y = top;
+		if (!curFB_) {
+			// We render "upside down" to the backbuffer since GL is silly.
+			y = targetHeight_ - (top + height);
+		}
+		glstate.scissorRect.set(left, y, width, height);
 	}
 
 	void SetViewports(int count, Viewport *viewports) override {
@@ -536,15 +513,15 @@ public:
 				}
 			case VENDORSTRING: return (const char *)glGetString(GL_VENDOR);
 			case VENDOR:
-				switch (gl_extensions.gpuVendor) {
-				case GPU_VENDOR_AMD: return "VENDOR_AMD";
-				case GPU_VENDOR_POWERVR: return "VENDOR_POWERVR";
-				case GPU_VENDOR_NVIDIA: return "VENDOR_NVIDIA";
-				case GPU_VENDOR_INTEL: return "VENDOR_INTEL";
-				case GPU_VENDOR_ADRENO: return "VENDOR_ADRENO";
-				case GPU_VENDOR_ARM: return "VENDOR_ARM";
-				case GPU_VENDOR_BROADCOM: return "VENDOR_BROADCOM";
-				case GPU_VENDOR_UNKNOWN:
+				switch (caps_.vendor) {
+				case GPUVendor::VENDOR_AMD: return "VENDOR_AMD";
+				case GPUVendor::VENDOR_IMGTEC: return "VENDOR_POWERVR";
+				case GPUVendor::VENDOR_NVIDIA: return "VENDOR_NVIDIA";
+				case GPUVendor::VENDOR_INTEL: return "VENDOR_INTEL";
+				case GPUVendor::VENDOR_QUALCOMM: return "VENDOR_ADRENO";
+				case GPUVendor::VENDOR_ARM: return "VENDOR_ARM";
+				case GPUVendor::VENDOR_BROADCOM: return "VENDOR_BROADCOM";
+				case GPUVendor::VENDOR_UNKNOWN:
 				default:
 					return "VENDOR_UNKNOWN";
 				}
@@ -556,7 +533,7 @@ public:
 		}
 	}
 
-	uintptr_t GetNativeObject(NativeObject obj) const override {
+	uintptr_t GetNativeObject(NativeObject obj) override {
 		return 0;
 	}
 
@@ -580,6 +557,7 @@ private:
 	int curVBufferOffsets_[4]{};
 	OpenGLBuffer *curIBuffer_ = nullptr;
 	int curIBufferOffset_ = 0;
+	OpenGLFramebuffer *curFB_;
 
 	// Framebuffer state
 	GLuint currentDrawHandle_ = 0;
@@ -587,8 +565,6 @@ private:
 };
 
 OpenGLContext::OpenGLContext() {
-	CreatePresets();
-
 	// TODO: Detect more caps
 	if (gl_extensions.IsGLES) {
 		if (gl_extensions.OES_packed_depth_stencil || gl_extensions.OES_depth24) {
@@ -600,6 +576,21 @@ OpenGLContext::OpenGLContext() {
 		caps_.preferredDepthBufferFormat = DataFormat::D24_S8;
 	}
 	caps_.framebufferBlitSupported = gl_extensions.NV_framebuffer_blit || gl_extensions.ARB_framebuffer_object;
+	caps_.framebufferDepthBlitSupported = caps_.framebufferBlitSupported;
+
+	switch (gl_extensions.gpuVendor) {
+	case GPU_VENDOR_AMD: caps_.vendor = GPUVendor::VENDOR_AMD; break;
+	case GPU_VENDOR_NVIDIA: caps_.vendor = GPUVendor::VENDOR_NVIDIA; break;
+	case GPU_VENDOR_ARM: caps_.vendor = GPUVendor::VENDOR_ARM; break;
+	case GPU_VENDOR_QUALCOMM: caps_.vendor = GPUVendor::VENDOR_QUALCOMM; break;
+	case GPU_VENDOR_BROADCOM: caps_.vendor = GPUVendor::VENDOR_BROADCOM; break;
+	case GPU_VENDOR_INTEL: caps_.vendor = GPUVendor::VENDOR_INTEL; break;
+	case GPU_VENDOR_IMGTEC: caps_.vendor = GPUVendor::VENDOR_IMGTEC; break;
+	case GPU_VENDOR_UNKNOWN:
+	default:
+		caps_.vendor = GPUVendor::VENDOR_UNKNOWN;
+		break;
+	}
 }
 
 OpenGLContext::~OpenGLContext() {
@@ -728,11 +719,107 @@ void OpenGLTexture::AutoGenMipmaps() {
 	}
 }
 
-void OpenGLTexture::SetImageData(int x, int y, int z, int width, int height, int depth, int level, int stride, const uint8_t *data) {
-	int internalFormat;
-	int format;
-	int type;
+class OpenGLFramebuffer : public Framebuffer {
+public:
+	OpenGLFramebuffer() {}
+	~OpenGLFramebuffer();
 
+	GLuint handle = 0;
+	GLuint color_texture = 0;
+	GLuint z_stencil_buffer = 0;  // Either this is set, or the two below.
+	GLuint z_buffer = 0;
+	GLuint stencil_buffer = 0;
+
+	int width;
+	int height;
+	FBColorDepth colorDepth;
+};
+
+
+// TODO: Also output storage format (GL_RGBA8 etc) for modern GL usage.
+static bool Thin3DFormatToFormatAndType(DataFormat fmt, GLuint &internalFormat, GLuint &format, GLuint &type, int &alignment) {
+	alignment = 4;
+	switch (fmt) {
+	case DataFormat::R8G8B8A8_UNORM:
+		internalFormat = GL_RGBA;
+		format = GL_RGBA;
+		type = GL_UNSIGNED_BYTE;
+		break;
+
+	case DataFormat::D32F:
+		internalFormat = GL_DEPTH_COMPONENT;
+		format = GL_DEPTH_COMPONENT;
+		type = GL_FLOAT;
+		break;
+
+#ifndef USING_GLES2
+	case DataFormat::S8:
+		internalFormat = GL_STENCIL_INDEX;
+		format = GL_STENCIL_INDEX;
+		type = GL_UNSIGNED_BYTE;
+		alignment = 1;
+		break;
+#endif
+
+	case DataFormat::R8G8B8_UNORM:
+		internalFormat = GL_RGB;
+		format = GL_RGB;
+		type = GL_UNSIGNED_BYTE;
+		alignment = 1;
+		break;
+
+	case DataFormat::B4G4R4A4_UNORM_PACK16:
+		internalFormat = GL_RGBA;
+		format = GL_RGBA;
+		type = GL_UNSIGNED_SHORT_4_4_4_4;
+		alignment = 2;
+		break;
+
+	case DataFormat::B5G6R5_UNORM_PACK16:
+		internalFormat = GL_RGB;
+		format = GL_RGB;
+		type = GL_UNSIGNED_SHORT_5_6_5;
+		alignment = 2;
+		break;
+
+	case DataFormat::B5G5R5A1_UNORM_PACK16:
+		internalFormat = GL_RGBA;
+		format = GL_RGBA;
+		type = GL_UNSIGNED_SHORT_5_5_5_1;
+		alignment = 2;
+		break;
+
+#ifndef USING_GLES2
+	case DataFormat::A4R4G4B4_UNORM_PACK16:
+		internalFormat = GL_RGBA;
+		format = GL_RGBA;
+		type = GL_UNSIGNED_SHORT_4_4_4_4_REV;
+		alignment = 2;
+		break;
+
+	case DataFormat::R5G6B5_UNORM_PACK16:
+		internalFormat = GL_RGB;
+		format = GL_RGB;
+		type = GL_UNSIGNED_SHORT_5_6_5_REV;
+		alignment = 2;
+		break;
+
+	case DataFormat::A1R5G5B5_UNORM_PACK16:
+		internalFormat = GL_RGBA;
+		format = GL_RGBA;
+		type = GL_UNSIGNED_SHORT_1_5_5_5_REV;
+		alignment = 2;
+		break;
+#endif
+
+	default:
+		ELOG("Thin3d GL: Unsupported texture format %d", (int)fmt);
+		return false;
+	}
+	return true;
+}
+
+void OpenGLTexture::SetImageData(int x, int y, int z, int width, int height, int depth, int level, int stride, const uint8_t *data) {
 	if (width != width_ || height != height_ || depth != depth_) {
 		// When switching to texStorage we need to handle this correctly.
 		width_ = width;
@@ -740,26 +827,11 @@ void OpenGLTexture::SetImageData(int x, int y, int z, int width, int height, int
 		depth_ = depth;
 	}
 
-	switch (format_) {
-	case DataFormat::R8G8B8A8_UNORM:
-		internalFormat = GL_RGBA;
-		format = GL_RGBA;
-		type = GL_UNSIGNED_BYTE;
-		break;
-	case DataFormat::B4G4R4A4_UNORM_PACK16:
-		internalFormat = GL_RGBA;
-		format = GL_RGBA;
-		type = GL_UNSIGNED_SHORT_4_4_4_4;
-		break;
-#ifndef USING_GLES2
-	case DataFormat::A4R4G4B4_UNORM_PACK16:
-		internalFormat = GL_RGBA;
-		format = GL_RGBA;
-		type = GL_UNSIGNED_SHORT_4_4_4_4_REV;
-		break;
-#endif
-	default:
-		ELOG("Thin3d GL: Unsupported texture format %d", (int)format_);
+	GLuint internalFormat;
+	GLuint format;
+	GLuint type;
+	int alignment;
+	if (!Thin3DFormatToFormatAndType(format_, internalFormat, format, type, alignment)) {
 		return;
 	}
 
@@ -774,6 +846,80 @@ void OpenGLTexture::SetImageData(int x, int y, int z, int width, int height, int
 	}
 	CHECK_GL_ERROR_IF_DEBUG();
 }
+
+
+#ifdef DEBUG_READ_PIXELS
+// TODO: Make more generic.
+static void LogReadPixelsError(GLenum error) {
+	switch (error) {
+	case GL_NO_ERROR:
+		break;
+	case GL_INVALID_ENUM:
+		ERROR_LOG(FRAMEBUF, "glReadPixels: GL_INVALID_ENUM");
+		break;
+	case GL_INVALID_VALUE:
+		ERROR_LOG(FRAMEBUF, "glReadPixels: GL_INVALID_VALUE");
+		break;
+	case GL_INVALID_OPERATION:
+		ERROR_LOG(FRAMEBUF, "glReadPixels: GL_INVALID_OPERATION");
+		break;
+	case GL_INVALID_FRAMEBUFFER_OPERATION:
+		ERROR_LOG(FRAMEBUF, "glReadPixels: GL_INVALID_FRAMEBUFFER_OPERATION");
+		break;
+	case GL_OUT_OF_MEMORY:
+		ERROR_LOG(FRAMEBUF, "glReadPixels: GL_OUT_OF_MEMORY");
+		break;
+#ifndef USING_GLES2
+	case GL_STACK_UNDERFLOW:
+		ERROR_LOG(FRAMEBUF, "glReadPixels: GL_STACK_UNDERFLOW");
+		break;
+	case GL_STACK_OVERFLOW:
+		ERROR_LOG(FRAMEBUF, "glReadPixels: GL_STACK_OVERFLOW");
+		break;
+#endif
+	default:
+		ERROR_LOG(FRAMEBUF, "glReadPixels: %08x", error);
+		break;
+	}
+}
+#endif
+
+bool OpenGLContext::CopyFramebufferToMemorySync(Framebuffer *src, int channelBits, int x, int y, int w, int h, Draw::DataFormat dataFormat, void *pixels, int pixelStride) {
+	OpenGLFramebuffer *fb = (OpenGLFramebuffer *)src;
+	fbo_bind_fb_target(true, fb ? fb->handle : 0);
+
+	// Reads from the "bound for read" framebuffer.
+	if (gl_extensions.GLES3 || !gl_extensions.IsGLES)
+		glReadBuffer(GL_COLOR_ATTACHMENT0);
+
+	CHECK_GL_ERROR_IF_DEBUG();
+
+	GLuint internalFormat;
+	GLuint format;
+	GLuint type;
+	int alignment;
+	if (!Thin3DFormatToFormatAndType(dataFormat, internalFormat, format, type, alignment)) {
+		assert(false);
+	}
+	// Apply the correct alignment.
+	glPixelStorei(GL_PACK_ALIGNMENT, alignment);
+	if (!gl_extensions.IsGLES || gl_extensions.GLES3) {
+		// Even if not required, some drivers seem to require we specify this.  See #8254.
+		glPixelStorei(GL_PACK_ROW_LENGTH, pixelStride);
+	}
+
+	glReadPixels(x, y, w, h, format, type, pixels);
+#ifdef DEBUG_READ_PIXELS
+	LogReadPixelsError(glGetError());
+#endif
+
+	if (!gl_extensions.IsGLES || gl_extensions.GLES3) {
+		glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+	}
+	CHECK_GL_ERROR_IF_DEBUG();
+	return true;
+}
+
 
 Texture *OpenGLContext::CreateTexture(const TextureDesc &desc) {
 	return new OpenGLTexture(desc);
@@ -799,14 +945,6 @@ void OpenGLInputLayout::Compile() {
 	}
 	needsEnable_ = true;
 	lastBase_ = -1;
-}
-
-void OpenGLInputLayout::GLLost() {
-	id_ = 0;
-}
-
-void OpenGLInputLayout::GLRestore() {
-	Compile();
 }
 
 DepthStencilState *OpenGLContext::CreateDepthStencilState(const DepthStencilStateDesc &desc) {
@@ -885,7 +1023,7 @@ RasterState *OpenGLContext::CreateRasterState(const RasterStateDesc &desc) {
 	return rs;
 }
 
-class OpenGLBuffer : public Buffer, GfxResourceHolder {
+class OpenGLBuffer : public Buffer {
 public:
 	OpenGLBuffer(size_t size, uint32_t flags) {
 		glGenBuffers(1, &buffer_);
@@ -898,26 +1036,14 @@ public:
 		totalSize_ = size;
 		glBindBuffer(target_, buffer_);
 		glBufferData(target_, size, NULL, usage_);
-		register_gl_resource_holder(this, "drawcontext_buffer", 0);
 	}
 	~OpenGLBuffer() override {
-		unregister_gl_resource_holder(this);
 		glDeleteBuffers(1, &buffer_);
 	}
 
 	void Bind(int offset) {
 		// TODO: Can't support offset using ES 2.0
 		glBindBuffer(target_, buffer_);
-	}
-
-	void GLLost() override {
-		buffer_ = 0;
-	}
-
-	void GLRestore() override {
-		ILOG("Recreating vertex buffer after gl_restore");
-		totalSize_ = 0;  // Will cause a new glBufferData call. Should genBuffers again though?
-		glGenBuffers(1, &buffer_);
 	}
 
 	GLuint buffer_;
@@ -1242,36 +1368,6 @@ void OpenGLInputLayout::Unapply() {
 	}
 }
 
-class OpenGLFramebuffer : public Framebuffer, public GfxResourceHolder {
-public:
-	OpenGLFramebuffer() {
-		register_gl_resource_holder(this, "framebuffer", 0);
-	}
-	~OpenGLFramebuffer();
-
-	void GLLost() override {
-		handle = 0;
-		color_texture = 0;
-		z_stencil_buffer = 0;
-		z_buffer = 0;
-		stencil_buffer = 0;
-	}
-
-	void GLRestore() override {
-		ELOG("Restoring framebuffers not yet implemented");
-	}
-
-	GLuint handle = 0;
-	GLuint color_texture = 0;
-	GLuint z_stencil_buffer = 0;  // Either this is set, or the two below.
-	GLuint z_buffer = 0;
-	GLuint stencil_buffer = 0;
-
-	int width;
-	int height;
-	FBColorDepth colorDepth;
-};
-
 // On PC, we always use GL_DEPTH24_STENCIL8. 
 // On Android, we try to use what's available.
 
@@ -1520,12 +1616,12 @@ void OpenGLContext::fbo_bind_fb_target(bool read, GLuint name) {
 void OpenGLContext::fbo_unbind() {
 #ifndef USING_GLES2
 	if (gl_extensions.ARB_framebuffer_object || gl_extensions.IsGLES) {
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glBindFramebuffer(GL_FRAMEBUFFER, g_defaultFBO);
 	} else if (gl_extensions.EXT_framebuffer_object) {
-		glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
+		glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, g_defaultFBO);
 	}
 #else
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, g_defaultFBO);
 #endif
 
 #ifdef IOS
@@ -1538,6 +1634,7 @@ void OpenGLContext::fbo_unbind() {
 
 void OpenGLContext::BindFramebufferAsRenderTarget(Framebuffer *fbo, const RenderPassInfo &rp) {
 	CHECK_GL_ERROR_IF_DEBUG();
+	curFB_ = (OpenGLFramebuffer *)fbo;
 	if (fbo) {
 		OpenGLFramebuffer *fb = (OpenGLFramebuffer *)fbo;
 		// Without FBO_ARB / GLES3, this will collide with bind_for_read, but there's nothing
@@ -1583,13 +1680,6 @@ void OpenGLContext::BindFramebufferAsRenderTarget(Framebuffer *fbo, const Render
 		glstate.stencilFunc.restore();
 		glstate.stencilMask.restore();
 	}
-	CHECK_GL_ERROR_IF_DEBUG();
-}
-
-// For GL_EXT_FRAMEBUFFER_BLIT and similar.
-void OpenGLContext::BindFramebufferForRead(Framebuffer *fbo) {
-	OpenGLFramebuffer *fb = (OpenGLFramebuffer *)fbo;
-	fbo_bind_fb_target(true, fb->handle);
 	CHECK_GL_ERROR_IF_DEBUG();
 }
 
@@ -1691,14 +1781,13 @@ void OpenGLContext::BindFramebufferAsTexture(Framebuffer *fbo, int binding, FBCh
 }
 
 OpenGLFramebuffer::~OpenGLFramebuffer() {
-	unregister_gl_resource_holder(this);
 	CHECK_GL_ERROR_IF_DEBUG();
 	if (gl_extensions.ARB_framebuffer_object || gl_extensions.IsGLES) {
 		if (handle) {
 			glBindFramebuffer(GL_FRAMEBUFFER, handle);
 			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
 			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			glBindFramebuffer(GL_FRAMEBUFFER, g_defaultFBO);
 			glDeleteFramebuffers(1, &handle);
 		}
 		if (z_stencil_buffer)
@@ -1713,7 +1802,7 @@ OpenGLFramebuffer::~OpenGLFramebuffer() {
 			glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, handle);
 			glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
 			glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER_EXT, 0);
-			glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
+			glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, g_defaultFBO);
 			glDeleteFramebuffersEXT(1, &handle);
 		}
 		if (z_stencil_buffer)
@@ -1730,8 +1819,13 @@ OpenGLFramebuffer::~OpenGLFramebuffer() {
 
 void OpenGLContext::GetFramebufferDimensions(Framebuffer *fbo, int *w, int *h) {
 	OpenGLFramebuffer *fb = (OpenGLFramebuffer *)fbo;
-	*w = fb->width;
-	*h = fb->height;
+	if (fb) {
+		*w = fb->width;
+		*h = fb->height;
+	} else {
+		*w = targetWidth_;
+		*h = targetHeight_;
+	}
 }
 
 uint32_t OpenGLContext::GetDataFormatSupport(DataFormat fmt) const {

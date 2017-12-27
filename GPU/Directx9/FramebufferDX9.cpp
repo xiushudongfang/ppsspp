@@ -131,7 +131,7 @@ static const D3DVERTEXELEMENT9 g_FramebufferVertexElements[] = {
 			drawPixelsTex_->Release();
 		}
 		for (auto it = tempFBOs_.begin(), end = tempFBOs_.end(); it != end; ++it) {
-			delete it->second.fbo;
+			it->second.fbo->Release();
 		}
 		for (auto it = offscreenSurfaces_.begin(), end = offscreenSurfaces_.end(); it != end; ++it) {
 			it->second.surface->Release();
@@ -153,6 +153,11 @@ static const D3DVERTEXELEMENT9 g_FramebufferVertexElements[] = {
 	void FramebufferManagerDX9::SetShaderManager(ShaderManagerDX9 *sm) {
 		shaderManagerDX9_ = sm;
 		shaderManager_ = sm;
+	}
+
+	void FramebufferManagerDX9::SetDrawEngine(DrawEngineDX9 *td) {
+		drawEngineD3D9_ = td;
+		drawEngine_ = td;
 	}
 
 	void FramebufferManagerDX9::MakePixelTexture(const u8 *srcPixels, GEBufferFormat srcPixelFormat, int srcStride, int width, int height, float &u1, float &v1) {
@@ -296,15 +301,6 @@ static const D3DVERTEXELEMENT9 g_FramebufferVertexElements[] = {
 		HRESULT hr = device_->DrawPrimitiveUP(D3DPT_TRIANGLEFAN, 2, coord, 5 * sizeof(float));
 		if (FAILED(hr)) {
 			ERROR_LOG_REPORT(G3D, "DrawActiveTexture() failed: %08x", hr);
-		}
-	}
-
-	void FramebufferManagerDX9::RebindFramebuffer() {
-		if (currentRenderVfb_ && currentRenderVfb_->fbo) {
-			draw_->BindFramebufferAsRenderTarget(currentRenderVfb_->fbo, { Draw::RPAction::KEEP, Draw::RPAction::KEEP });
-		} else {
-			// Should this even happen?
-			draw_->BindFramebufferAsRenderTarget(nullptr, { Draw::RPAction::KEEP, Draw::RPAction::KEEP });
 		}
 	}
 
@@ -473,55 +469,6 @@ static const D3DVERTEXELEMENT9 g_FramebufferVertexElements[] = {
 		}
 	}
 
-	void FramebufferManagerDX9::ReadFramebufferToMemory(VirtualFramebuffer *vfb, bool sync, int x, int y, int w, int h) {
-		if (vfb) {
-			// We'll pseudo-blit framebuffers here to get a resized version of vfb.
-			VirtualFramebuffer *nvfb = FindDownloadTempBuffer(vfb);
-			OptimizeDownloadRange(vfb, x, y, w, h);
-			BlitFramebuffer(nvfb, x, y, vfb, x, y, w, h, 0);
-
-			PackFramebufferDirectx9_(nvfb, x, y, w, h);
-
-			textureCacheDX9_->ForgetLastTexture();
-			RebindFramebuffer();
-		}
-	}
-
-	void FramebufferManagerDX9::DownloadFramebufferForClut(u32 fb_address, u32 loadBytes) {
-		VirtualFramebuffer *vfb = GetVFBAt(fb_address);
-		if (vfb && vfb->fb_stride != 0) {
-			const u32 bpp = vfb->drawnFormat == GE_FORMAT_8888 ? 4 : 2;
-			int x = 0;
-			int y = 0;
-			int pixels = loadBytes / bpp;
-			// The height will be 1 for each stride or part thereof.
-			int w = std::min(pixels % vfb->fb_stride, (int)vfb->width);
-			int h = std::min((pixels + vfb->fb_stride - 1) / vfb->fb_stride, (int)vfb->height);
-
-			// We might still have a pending draw to the fb in question, flush if so.
-			FlushBeforeCopy();
-
-			// No need to download if we already have it.
-			if (!vfb->memoryUpdated && vfb->clutUpdatedBytes < loadBytes) {
-				// We intentionally don't call OptimizeDownloadRange() here - we don't want to over download.
-				// CLUT framebuffers are often incorrectly estimated in size.
-				if (x == 0 && y == 0 && w == vfb->width && h == vfb->height) {
-					vfb->memoryUpdated = true;
-				}
-				vfb->clutUpdatedBytes = loadBytes;
-
-				// We'll pseudo-blit framebuffers here to get a resized version of vfb.
-				VirtualFramebuffer *nvfb = FindDownloadTempBuffer(vfb);
-				BlitFramebuffer(nvfb, x, y, vfb, x, y, w, h, 0);
-
-				PackFramebufferDirectx9_(nvfb, x, y, w, h);
-
-				textureCacheDX9_->ForgetLastTexture();
-				RebindFramebuffer();
-			}
-		}
-	}
-
 	bool FramebufferManagerDX9::CreateDownloadTempBuffer(VirtualFramebuffer *nvfb) {
 		nvfb->colorDepth = Draw::FBO_8888;
 
@@ -640,7 +587,7 @@ static const D3DVERTEXELEMENT9 g_FramebufferVertexElements[] = {
 		}
 	}
 
-	void FramebufferManagerDX9::PackFramebufferDirectx9_(VirtualFramebuffer *vfb, int x, int y, int w, int h) {
+	void FramebufferManagerDX9::PackFramebufferSync_(VirtualFramebuffer *vfb, int x, int y, int w, int h) {
 		if (!vfb->fbo) {
 			ERROR_LOG_REPORT_ONCE(vfbfbozero, SCEGE, "PackFramebufferDirectx9_: vfb->fbo == 0");
 			return;
@@ -737,25 +684,6 @@ static const D3DVERTEXELEMENT9 g_FramebufferVertexElements[] = {
 		DestroyAllFBOs();
 	}
 
-	std::vector<FramebufferInfo> FramebufferManagerDX9::GetFramebufferList() {
-		std::vector<FramebufferInfo> list;
-
-		for (size_t i = 0; i < vfbs_.size(); ++i) {
-			VirtualFramebuffer *vfb = vfbs_[i];
-
-			FramebufferInfo info;
-			info.fb_address = vfb->fb_address;
-			info.z_address = vfb->z_address;
-			info.format = vfb->format;
-			info.width = vfb->width;
-			info.height = vfb->height;
-			info.fbo = vfb->fbo;
-			list.push_back(info);
-		}
-
-		return list;
-	}
-
 	void FramebufferManagerDX9::DecimateFBOs() {
 		FramebufferManagerCommon::DecimateFBOs();
 		for (auto it = offscreenSurfaces_.begin(); it != offscreenSurfaces_.end(); ) {
@@ -789,7 +717,7 @@ static const D3DVERTEXELEMENT9 g_FramebufferVertexElements[] = {
 		bvfbs_.clear();
 
 		for (auto it = tempFBOs_.begin(), end = tempFBOs_.end(); it != end; ++it) {
-			delete it->second.fbo;
+			it->second.fbo->Release();
 		}
 		tempFBOs_.clear();
 
@@ -797,18 +725,10 @@ static const D3DVERTEXELEMENT9 g_FramebufferVertexElements[] = {
 			it->second.surface->Release();
 		}
 		offscreenSurfaces_.clear();
+
+		SetNumExtraFBOs(0);
+
 		DisableState();
-	}
-
-	void FramebufferManagerDX9::FlushBeforeCopy() {
-		// Flush anything not yet drawn before blitting, downloading, or uploading.
-		// This might be a stalled list, or unflushed before a block transfer, etc.
-
-		// TODO: It's really bad that we are calling SetRenderFramebuffer here with
-		// all the irrelevant state checking it'll use to decide what to do. Should
-		// do something more focused here.
-		SetRenderFrameBuffer(gstate_c.IsDirty(DIRTY_FRAMEBUF), gstate_c.skipDrawReason);
-		drawEngine_->Flush();
 	}
 
 	void FramebufferManagerDX9::Resized() {
@@ -851,7 +771,7 @@ static const D3DVERTEXELEMENT9 g_FramebufferVertexElements[] = {
 				success = GetRenderTargetFramebuffer(renderTarget, offscreen, w, h, buffer);
 			}
 			if (tempFBO) {
-				delete tempFBO;
+				tempFBO->Release();
 			}
 		}
 

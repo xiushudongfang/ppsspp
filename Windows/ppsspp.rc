@@ -504,10 +504,8 @@ BEGIN
 
         POPUP "Rendering Mode"
         BEGIN
-            MENUITEM "Non-Buffered Rendering",                    ID_OPTIONS_NONBUFFEREDRENDERING
-            MENUITEM "Buffered Rendering",                        ID_OPTIONS_BUFFEREDRENDERING
-            MENUITEM "Read Framebuffers To Memory (CPU)",         ID_OPTIONS_READFBOTOMEMORYCPU
-            MENUITEM "Read Framebuffers To Memory (GPU)",         ID_OPTIONS_READFBOTOMEMORYGPU
+            MENUITEM "Non-Buffered Rendering",              ID_OPTIONS_NONBUFFEREDRENDERING
+            MENUITEM "Buffered Rendering",                  ID_OPTIONS_BUFFEREDRENDERING
         END
         POPUP "Frame Skipping"
         BEGIN
@@ -653,6 +651,11 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "Toggle Breakpoint",          ID_DISASM_TOGGLEBREAKPOINT
         MENUITEM "Add Watch",                  ID_GEDBG_WATCH
+    END
+    POPUP "gepreviewoptions"
+    BEGIN
+        MENUITEM "Export Image...",            ID_GEDBG_EXPORT_IMAGE
+        MENUITEM "Show Prim Preview"           ID_GEDBG_ENABLE_PREVIEW
     END
 END
 

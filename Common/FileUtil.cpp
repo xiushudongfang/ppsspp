@@ -42,9 +42,8 @@
 #include <stdlib.h>
 #endif
 
-#if defined(__DragonFly__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+#if defined(__DragonFly__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__)
 #include <sys/sysctl.h>		// KERN_PROC_PATHNAME
-#include <unistd.h>		// getpid
 #endif
 
 #if defined(__APPLE__)
@@ -93,7 +92,7 @@ FILE *OpenCFile(const std::string &filename, const char *mode)
 
 bool OpenCPPFile(std::fstream & stream, const std::string &filename, std::ios::openmode mode)
 {
-#if defined(_WIN32) && defined(UNICODE)
+#if defined(_WIN32) && defined(UNICODE) && !defined(__MINGW32__)
 	stream.open(ConvertUTF8ToWString(filename), mode);
 #else
 	stream.open(filename.c_str(), mode);
@@ -209,7 +208,7 @@ bool Delete(const std::string &filename) {
 // Returns true if successful, or path already exists.
 bool CreateDir(const std::string &path)
 {
-	INFO_LOG(COMMON, "CreateDir: directory %s", path.c_str());
+	DEBUG_LOG(COMMON, "CreateDir('%s')", path.c_str());
 #ifdef _WIN32
 	if (::CreateDirectory(ConvertUTF8ToWString(path).c_str(), NULL))
 		return true;
@@ -738,28 +737,6 @@ void openIniFile(const std::string fileName) {
 #endif
 }
 
-// Returns the current directory
-std::string GetCurrentDir()
-{
-	char *dir;
-	// Get the current working directory (getcwd uses malloc) 
-	if (!(dir = __getcwd(NULL, 0))) {
-
-		ERROR_LOG(COMMON, "GetCurrentDirectory failed: %s",
-				  GetLastErrorMsg());
-		return NULL;
-	}
-	std::string strDir = dir;
-	free(dir);
-	return strDir;
-}
-
-// Sets the current directory to the given directory
-bool SetCurrentDir(const std::string &directory)
-{
-	return __chdir(directory.c_str()) == 0;
-}
-
 const std::string &GetExeDirectory()
 {
 	static std::string ExePath;
@@ -789,9 +766,15 @@ const std::string &GetExeDirectory()
 #elif defined(KERN_PROC_PATHNAME)
 		int mib[4] = {
 			CTL_KERN,
+#if defined(__NetBSD__)
+			KERN_PROC_ARGS,
+			-1,
+			KERN_PROC_PATHNAME,
+#else
 			KERN_PROC,
 			KERN_PROC_PATHNAME,
-			getpid()
+			-1,
+#endif
 		};
 		size_t sz = program_path_size;
 

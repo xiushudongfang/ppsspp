@@ -46,6 +46,11 @@
 #include "HW/MemoryStick.h"
 #include "GPU/GPUState.h"
 
+#ifndef MOBILE_DEVICE
+#include "Core/AVIDump.h"
+#include "Core/HLE/__sceAudio.h"
+#endif
+
 namespace SaveState
 {
 	struct SaveStart
@@ -524,6 +529,7 @@ namespace SaveState
 		return false;
 	}
 
+#ifndef MOBILE_DEVICE
 	static inline void CheckRewindState()
 	{
 		if (gpuStats.numFlips % g_Config.iRewindFlipFrequency != 0)
@@ -539,6 +545,7 @@ namespace SaveState
 		DEBUG_LOG(BOOT, "saving rewind state");
 		rewindStates.Save();
 	}
+#endif
 
 	bool HasLoadedState()
 	{
@@ -591,6 +598,17 @@ namespace SaveState
 					callbackMessage = sc->T("Loaded State");
 					callbackResult = true;
 					hasLoadedState = true;
+#ifndef MOBILE_DEVICE
+					if (g_Config.bSaveLoadResetsAVdumping) {
+						if (g_Config.bDumpFrames) {
+							AVIDump::Stop();
+							AVIDump::Start(PSP_CoreParameter().renderWidth, PSP_CoreParameter().renderHeight);
+						}
+						if (g_Config.bDumpAudio) {
+							WAVDump::Reset();
+						}
+					}
+#endif
 				} else if (result == CChunkFileReader::ERROR_BROKEN_STATE) {
 					HandleFailure();
 					callbackMessage = i18nLoadFailure;
@@ -615,6 +633,17 @@ namespace SaveState
 				if (result == CChunkFileReader::ERROR_NONE) {
 					callbackMessage = sc->T("Saved State");
 					callbackResult = true;
+#ifndef MOBILE_DEVICE
+					if (g_Config.bSaveLoadResetsAVdumping) {
+						if (g_Config.bDumpFrames) {
+							AVIDump::Stop();
+							AVIDump::Start(PSP_CoreParameter().renderWidth, PSP_CoreParameter().renderHeight);
+						}
+						if (g_Config.bDumpAudio) {
+							WAVDump::Reset();
+						}
+					}
+#endif
 				} else if (result == CChunkFileReader::ERROR_BROKEN_STATE) {
 					HandleFailure();
 					callbackMessage = i18nSaveFailure;
@@ -660,7 +689,7 @@ namespace SaveState
 				break;
 
 			case SAVESTATE_SAVE_SCREENSHOT:
-				callbackResult = TakeGameScreenshot(op.filename.c_str(), SCREENSHOT_JPG, SCREENSHOT_DISPLAY);
+				callbackResult = TakeGameScreenshot(op.filename.c_str(), ScreenshotFormat::JPG, SCREENSHOT_DISPLAY);
 				if (!callbackResult) {
 					ERROR_LOG(SAVESTATE, "Failed to take a screenshot for the savestate! %s", op.filename.c_str());
 				}

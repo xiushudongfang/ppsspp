@@ -58,27 +58,32 @@ class DrawContext;
 
 // Used by D3D11 and Vulkan, could be used by modern GL
 struct SamplerCacheKey {
-	SamplerCacheKey() : fullKey(0) {}
-
 	union {
-		u32 fullKey;
+		uint64_t fullKey;
 		struct {
+			// These are 8.8 fixed point.
+			int16_t maxLevel;
+			int16_t minLevel;
+			int16_t lodBias;
+
 			bool mipEnable : 1;
 			bool minFilt : 1;
 			bool mipFilt : 1;
 			bool magFilt : 1;
 			bool sClamp : 1;
 			bool tClamp : 1;
-			bool lodAuto : 1;
-			bool : 1;
-			int8_t maxLevel : 4;
-			int8_t : 4;
-			int16_t lodBias : 16;
+			bool aniso : 1;
 		};
 	};
-
 	bool operator < (const SamplerCacheKey &other) const {
 		return fullKey < other.fullKey;
+	}
+	void ToString(std::string *str) const {
+		str->resize(sizeof(*this));
+		memcpy(&(*str)[0], this, sizeof(*this));
+	}
+	void FromString(const std::string &str) {
+		memcpy(this, &str[0], sizeof(*this));
 	}
 };
 
@@ -91,7 +96,7 @@ struct TexCacheEntry {
 	// After marking STATUS_UNRELIABLE, if it stays the same this many frames we'll trust it again.
 	const static int FRAMES_REGAIN_TRUST = 1000;
 
-	enum Status {
+	enum TexStatus {
 		STATUS_HASHING = 0x00,
 		STATUS_RELIABLE = 0x01,        // Don't bother rehashing.
 		STATUS_UNRELIABLE = 0x02,      // Always recheck hash.
@@ -99,8 +104,9 @@ struct TexCacheEntry {
 
 		STATUS_ALPHA_UNKNOWN = 0x04,
 		STATUS_ALPHA_FULL = 0x00,      // Has no alpha channel, or always full alpha.
-		STATUS_ALPHA_SIMPLE = 0x08,    // Like above, but also has 0 alpha (e.g. 5551.)
-		STATUS_ALPHA_MASK = 0x0c,
+		STATUS_ALPHA_MASK = 0x04,
+
+		// 0x08 free.
 
 		STATUS_CHANGE_FREQUENT = 0x10, // Changes often (less than 6 frames in between.)
 		STATUS_CLUT_RECHECK = 0x20,    // Another texture with same addr had a hashfail.
@@ -150,24 +156,22 @@ struct TexCacheEntry {
 	bool sClamp;
 	bool tClamp;
 
-	Status GetHashStatus() {
-		return Status(status & STATUS_MASK);
+	TexStatus GetHashStatus() {
+		return TexStatus(status & STATUS_MASK);
 	}
-	void SetHashStatus(Status newStatus) {
+	void SetHashStatus(TexStatus newStatus) {
 		status = (status & ~STATUS_MASK) | newStatus;
 	}
-	Status GetAlphaStatus() {
-		return Status(status & STATUS_ALPHA_MASK);
+	TexStatus GetAlphaStatus() {
+		return TexStatus(status & STATUS_ALPHA_MASK);
 	}
-	void SetAlphaStatus(Status newStatus) {
+	void SetAlphaStatus(TexStatus newStatus) {
 		status = (status & ~STATUS_ALPHA_MASK) | newStatus;
 	}
-	void SetAlphaStatus(Status newStatus, int level) {
+	void SetAlphaStatus(TexStatus newStatus, int level) {
 		// For non-level zero, only set more restrictive.
 		if (newStatus == STATUS_ALPHA_UNKNOWN || level == 0) {
 			SetAlphaStatus(newStatus);
-		} else if (newStatus == STATUS_ALPHA_SIMPLE && GetAlphaStatus() == STATUS_ALPHA_FULL) {
-			SetAlphaStatus(STATUS_ALPHA_SIMPLE);
 		}
 	}
 
@@ -214,7 +218,9 @@ public:
 	bool IsFakeMipmapChange() {
 		return PSP_CoreParameter().compat.flags().FakeMipmapChange && gstate.getTexLevelMode() == GE_TEXLEVEL_MODE_CONST;
 	}
-
+	bool VideoIsPlaying() {
+		return !videos_.empty();
+	}
 	virtual bool GetCurrentTextureDebug(GPUDebugBuffer &buffer, int level) { return false; }
 
 protected:
@@ -246,7 +252,8 @@ protected:
 	}
 
 	u32 EstimateTexMemoryUsage(const TexCacheEntry *entry);
-	void GetSamplingParams(int &minFilt, int &magFilt, bool &sClamp, bool &tClamp, float &lodBias, u8 maxLevel, u32 addr, bool &autoMip);
+	void GetSamplingParams(int &minFilt, int &magFilt, bool &sClamp, bool &tClamp, float &lodBias, int maxLevel, u32 addr, GETexLevelMode &mode);
+	void UpdateSamplingParams(TexCacheEntry &entry, SamplerCacheKey &key);  // Used by D3D11 and Vulkan.
 	void UpdateMaxSeenV(TexCacheEntry *entry, bool throughMode);
 
 	bool AttachFramebuffer(TexCacheEntry *entry, u32 address, VirtualFramebuffer *framebuffer, u32 texaddrOffset = 0);

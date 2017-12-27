@@ -18,7 +18,9 @@
 // Additionally, Common/Vulkan/* , including this file, are also licensed
 // under the public domain.
 
+#include "Common/Log.h"
 #include "Common/Vulkan/VulkanMemory.h"
+#include "math/math_util.h"
 
 VulkanPushBuffer::VulkanPushBuffer(VulkanContext *vulkan, size_t size) : device_(vulkan->GetDevice()), buf_(0), offset_(0), size_(size), writePtr_(nullptr) {
 	vulkan->MemoryTypeFromProperties(0xFFFFFFFF, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &memoryTypeIndex_);
@@ -37,27 +39,39 @@ bool VulkanPushBuffer::AddBuffer() {
 	VkBufferCreateInfo b = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
 	b.size = size_;
 	b.flags = 0;
-	b.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+	b.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 	b.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	b.queueFamilyIndexCount = 0;
 	b.pQueueFamilyIndices = nullptr;
 
 	VkResult res = vkCreateBuffer(device_, &b, nullptr, &info.buffer);
 	if (VK_SUCCESS != res) {
+		_assert_msg_(G3D, false, "vkCreateBuffer failed! result=%d", (int)res);
 		return false;
 	}
 
+	// Make validation happy.
+	VkMemoryRequirements reqs;
+	vkGetBufferMemoryRequirements(device_, info.buffer, &reqs);
+	// TODO: We really should use memoryTypeIndex here..
+
 	// Okay, that's the buffer. Now let's allocate some memory for it.
 	VkMemoryAllocateInfo alloc = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+	// TODO: Should check here that memoryTypeIndex_ matches reqs.memoryTypeBits.
 	alloc.memoryTypeIndex = memoryTypeIndex_;
-	alloc.allocationSize = size_;
+	alloc.allocationSize = reqs.size;
 
 	res = vkAllocateMemory(device_, &alloc, nullptr, &info.deviceMemory);
 	if (VK_SUCCESS != res) {
+		_assert_msg_(G3D, false, "vkAllocateMemory failed! size=%d result=%d", (int)reqs.size, (int)res);
+		vkDestroyBuffer(device_, info.buffer, nullptr);
 		return false;
 	}
 	res = vkBindBufferMemory(device_, info.buffer, info.deviceMemory, 0);
 	if (VK_SUCCESS != res) {
+		ELOG("vkBindBufferMemory failed! result=%d", (int)res);
+		vkFreeMemory(device_, info.deviceMemory, nullptr);
+		vkDestroyBuffer(device_, info.buffer, nullptr);
 		return false;
 	}
 
@@ -72,7 +86,6 @@ void VulkanPushBuffer::Destroy(VulkanContext *vulkan) {
 		vulkan->Delete().QueueDeleteBuffer(info.buffer);
 		vulkan->Delete().QueueDeleteDeviceMemory(info.deviceMemory);
 	}
-
 	buffers_.clear();
 }
 
@@ -122,8 +135,29 @@ size_t VulkanPushBuffer::GetTotalSize() const {
 	return sum;
 }
 
+void VulkanPushBuffer::Map() {
+	assert(!writePtr_);
+	VkResult res = vkMapMemory(device_, buffers_[buf_].deviceMemory, 0, size_, 0, (void **)(&writePtr_));
+	assert(writePtr_);
+	assert(VK_SUCCESS == res);
+}
+
+void VulkanPushBuffer::Unmap() {
+	assert(writePtr_);
+	/*
+	// Should not need this since we use coherent memory.
+	VkMappedMemoryRange range = { VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE };
+	range.offset = 0;
+	range.size = offset_;
+	range.memory = buffers_[buf_].deviceMemory;
+	vkFlushMappedMemoryRanges(device_, 1, &range);
+	*/
+	vkUnmapMemory(device_, buffers_[buf_].deviceMemory);
+	writePtr_ = nullptr;
+}
+
 VulkanDeviceAllocator::VulkanDeviceAllocator(VulkanContext *vulkan, size_t minSlabSize, size_t maxSlabSize)
-	: vulkan_(vulkan), lastSlab_(0), minSlabSize_(minSlabSize), maxSlabSize_(maxSlabSize), memoryTypeIndex_(UNDEFINED_MEMORY_TYPE), destroyed_(false) {
+	: vulkan_(vulkan), minSlabSize_(minSlabSize), maxSlabSize_(maxSlabSize) {
 	assert((minSlabSize_ & (SLAB_GRAIN_SIZE - 1)) == 0);
 }
 
@@ -136,13 +170,17 @@ void VulkanDeviceAllocator::Destroy() {
 	for (Slab &slab : slabs_) {
 		// Did anyone forget to free?
 		for (auto pair : slab.allocSizes) {
-			if (slab.usage[pair.first] != 2) {
-				// If it's not 2 (queued), there's a problem.
-				// If it's zero, it means allocSizes is somehow out of sync.
-				Crash();
+			int slabUsage = slab.usage[pair.first];
+			// If it's not 2 (queued), there's a leak.
+			// If it's zero, it means allocSizes is somehow out of sync.
+			if (slabUsage == 1) {
+				ERROR_LOG(G3D, "VulkanDeviceAllocator detected memory leak of size %d", (int)pair.second);
+			} else {
+				_dbg_assert_msg_(G3D, slabUsage == 2, "Destroy: slabUsage has unexpected value %d", slabUsage);
 			}
 		}
 
+		assert(slab.deviceMemory);
 		vulkan_->Delete().QueueDeleteDeviceMemory(slab.deviceMemory);
 	}
 	slabs_.clear();
@@ -164,8 +202,10 @@ size_t VulkanDeviceAllocator::Allocate(const VkMemoryRequirements &reqs, VkDevic
 		return ALLOCATE_FAILED;
 	}
 
+	size_t size = reqs.size;
+
 	size_t align = reqs.alignment <= SLAB_GRAIN_SIZE ? 1 : (size_t)(reqs.alignment >> SLAB_GRAIN_SHIFT);
-	size_t blocks = (size_t)((reqs.size + SLAB_GRAIN_SIZE - 1) >> SLAB_GRAIN_SHIFT);
+	size_t blocks = (size_t)((size + SLAB_GRAIN_SIZE - 1) >> SLAB_GRAIN_SHIFT);
 
 	const size_t numSlabs = slabs_.size();
 	for (size_t i = 0; i < numSlabs; ++i) {
@@ -187,7 +227,7 @@ size_t VulkanDeviceAllocator::Allocate(const VkMemoryRequirements &reqs, VkDevic
 	}
 
 	// Okay, we couldn't fit it into any existing slabs.  We need a new one.
-	if (!AllocateSlab(reqs.size)) {
+	if (!AllocateSlab(size)) {
 		return ALLOCATE_FAILED;
 	}
 
@@ -241,8 +281,22 @@ bool VulkanDeviceAllocator::AllocateFromSlab(Slab &slab, size_t &start, size_t b
 	return true;
 }
 
+int VulkanDeviceAllocator::ComputeUsagePercent() const {
+	int blockSum = 0;
+	int blocksUsed = 0;
+	for (int i = 0; i < slabs_.size(); i++) {
+		blockSum += (int)slabs_[i].usage.size();
+		for (int j = 0; j < slabs_[i].usage.size(); j++) {
+			blocksUsed += slabs_[i].usage[j] != 0 ? 1 : 0;
+		}
+	}
+	return blockSum == 0 ? 0 : 100 * blocksUsed / blockSum;
+}
+
 void VulkanDeviceAllocator::Free(VkDeviceMemory deviceMemory, size_t offset) {
 	assert(!destroyed_);
+
+	_assert_msg_(G3D, !slabs_.empty(), "No slabs - can't be anything to free! double-freed?");
 
 	// First, let's validate.  This will allow stack traces to tell us when frees are bad.
 	size_t start = offset >> SLAB_GRAIN_SHIFT;
@@ -253,14 +307,9 @@ void VulkanDeviceAllocator::Free(VkDeviceMemory deviceMemory, size_t offset) {
 		}
 
 		auto it = slab.allocSizes.find(start);
-		if (it == slab.allocSizes.end()) {
-			// Ack, a double free?
-			Crash();
-		}
-		if (slab.usage[start] != 1) {
-			// This means a double free, while queued to actually free.
-			Crash();
-		}
+		_assert_msg_(G3D, it != slab.allocSizes.end(), "Double free?");
+		// This means a double free, while queued to actually free.
+		_assert_msg_(G3D, slab.usage[start] == 1, "Double free when queued to free!");
 
 		// Mark it as "free in progress".
 		slab.usage[start] = 2;
@@ -269,9 +318,7 @@ void VulkanDeviceAllocator::Free(VkDeviceMemory deviceMemory, size_t offset) {
 	}
 
 	// Wrong deviceMemory even?  Maybe it was already decimated, but that means a double-free.
-	if (!found) {
-		Crash();
-	}
+	_assert_msg_(G3D, found, "Failed to find allocation to free! Double-freed?");
 
 	// Okay, now enqueue.  It's valid.
 	FreeInfo *info = new FreeInfo(this, deviceMemory, offset);
@@ -306,7 +353,7 @@ void VulkanDeviceAllocator::ExecuteFree(FreeInfo *userdata) {
 			slab.allocSizes.erase(it);
 		} else {
 			// Ack, a double free?
-			Crash();
+			_assert_msg_(G3D, false, "Double free? Block missing at offset %d", userdata->offset);
 		}
 		found = true;
 		break;

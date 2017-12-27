@@ -74,7 +74,11 @@ DrawEngineD3D11::DrawEngineD3D11(Draw::DrawContext *draw, ID3D11Device *device, 
 		device_(device),
 		context_(context),
 		vai_(256),
-		inputLayoutMap_(32) {
+		inputLayoutMap_(32),
+		blendCache_(32),
+		blendCache1_(32),
+		depthStencilCache_(64),
+		rasterCache_(4) {
 	device1_ = (ID3D11Device1 *)draw->GetNativeObject(Draw::NativeObject::DEVICE_EX);
 	context1_ = (ID3D11DeviceContext1 *)draw->GetNativeObject(Draw::NativeObject::CONTEXT_EX);
 	decOptions_.expandAllWeightsToFloat = true;
@@ -137,18 +141,22 @@ void DrawEngineD3D11::DestroyDeviceObjects() {
 	delete tessDataTransfer;
 	delete pushVerts_;
 	delete pushInds_;
-	for (auto &depth : depthStencilCache_) {
-		depth.second->Release();
-	}
-	for (auto &blend : blendCache_) {
-		blend.second->Release();
-	}
-	for (auto &blend1 : blendCache1_) {
-		blend1.second->Release();
-	}
-	for (auto &raster : rasterCache_) {
-		raster.second->Release();
-	}
+	depthStencilCache_.Iterate([&](const uint64_t &key, ID3D11DepthStencilState *ds) {
+		ds->Release();
+	});
+	depthStencilCache_.Clear();
+	blendCache_.Iterate([&](const uint64_t &key, ID3D11BlendState *bs) {
+		bs->Release();
+	});
+	blendCache_.Clear();
+	blendCache1_.Iterate([&](const uint64_t &key, ID3D11BlendState1 *bs) {
+		bs->Release();
+	});
+	blendCache1_.Clear();
+	rasterCache_.Iterate([&](const uint32_t &key, ID3D11RasterizerState *rs) {
+		rs->Release();
+	});
+	rasterCache_.Clear();
 }
 
 struct DeclTypeInfo {
@@ -175,8 +183,6 @@ static const DeclTypeInfo VComp[] = {
 	{ DXGI_FORMAT_UNKNOWN, "UNUSED_DEC_U16_2" },	// 	DEC_U16_2,
 	{ DXGI_FORMAT_R16G16B16A16_UNORM	,"D3DDECLTYPE_USHORT4N "}, // DEC_U16_3,
 	{ DXGI_FORMAT_R16G16B16A16_UNORM	,"D3DDECLTYPE_USHORT4N "}, // DEC_U16_4,
-	{ DXGI_FORMAT_UNKNOWN, "UNUSED_DEC_U8A_2"}, // DEC_U8A_2,
-	{ DXGI_FORMAT_UNKNOWN, "UNUSED_DEC_U16A_2" }, // DEC_U16A_2,
 };
 
 static void VertexAttribSetup(D3D11_INPUT_ELEMENT_DESC * VertexElement, u8 fmt, u8 offset, const char *semantic, u8 semantic_index = 0) {
@@ -190,7 +196,7 @@ static void VertexAttribSetup(D3D11_INPUT_ELEMENT_DESC * VertexElement, u8 fmt, 
 ID3D11InputLayout *DrawEngineD3D11::SetupDecFmtForDraw(D3D11VertexShader *vshader, const DecVtxFormat &decFmt, u32 pspFmt) {
 	// TODO: Instead of one for each vshader, we can reduce it to one for each type of shader
 	// that reads TEXCOORD or not, etc. Not sure if worth it.
-	InputLayoutKey key{ vshader, pspFmt };
+	InputLayoutKey key{ vshader, decFmt.id };
 	ID3D11InputLayout *inputLayout = inputLayoutMap_.Get(key);
 	if (inputLayout) {
 		return inputLayout;
@@ -251,22 +257,6 @@ ID3D11InputLayout *DrawEngineD3D11::SetupDecFmtForDraw(D3D11VertexShader *vshade
 	}
 }
 
-void DrawEngineD3D11::SetupVertexDecoder(u32 vertType) {
-	SetupVertexDecoderInternal(vertType);
-}
-
-inline void DrawEngineD3D11::SetupVertexDecoderInternal(u32 vertType) {
-	// As the decoder depends on the UVGenMode when we use UV prescale, we simply mash it
-	// into the top of the verttype where there are unused bits.
-	const u32 vertTypeID = (vertType & 0xFFFFFF) | (gstate.getUVGenMode() << 24);
-
-	// If vtype has changed, setup the vertex decoder.
-	if (vertTypeID != lastVType_) {
-		dec_ = GetVertexDecoder(vertTypeID);
-		lastVType_ = vertTypeID;
-	}
-}
-
 void DrawEngineD3D11::SubmitPrim(void *verts, void *inds, GEPrimitiveType prim, int vertexCount, u32 vertType, int *bytesRead) {
 	if (!indexGen.PrimCompatible(prevPrim_, prim) || numDrawCalls >= MAX_DEFERRED_DRAW_CALLS || vertexCountInDrawCalls_ + vertexCount > VERTEX_BUFFER_MAX)
 		Flush();
@@ -278,7 +268,7 @@ void DrawEngineD3D11::SubmitPrim(void *verts, void *inds, GEPrimitiveType prim, 
 		prevPrim_ = prim;
 	}
 
-	SetupVertexDecoderInternal(vertType);
+	SetupVertexDecoder(vertType);
 
 	*bytesRead = vertexCount * dec_->VertexSize();
 
@@ -333,22 +323,6 @@ void DrawEngineD3D11::SubmitPrim(void *verts, void *inds, GEPrimitiveType prim, 
 	}
 }
 
-void DrawEngineD3D11::DecodeVerts() {
-	const UVScale origUV = gstate_c.uv;
-	for (; decodeCounter_ < numDrawCalls; decodeCounter_++) {
-		gstate_c.uv = uvScale[decodeCounter_];
-		DecodeVertsStep(decoded, decodeCounter_, decodedVerts_);
-	}
-	gstate_c.uv = origUV;
-
-	// Sanity check
-	if (indexGen.Prim() < 0) {
-		ERROR_LOG_REPORT(G3D, "DecodeVerts: Failed to deduce prim: %i", indexGen.Prim());
-		// Force to points (0)
-		indexGen.AddPrim(GE_PRIM_POINTS, 0);
-	}
-}
-
 void DrawEngineD3D11::MarkUnreliable(VertexArrayInfoD3D11 *vai) {
 	vai->status = VertexArrayInfoD3D11::VAI_UNRELIABLE;
 	if (vai->vbo) {
@@ -387,6 +361,7 @@ void DrawEngineD3D11::BeginFrame() {
 			vai_.Remove(hash);
 		}
 	});
+	vai_.Maintain();
 
 	// Enable if you want to see vertex decoders in the log output. Need a better way.
 #if 0
@@ -456,7 +431,7 @@ void DrawEngineD3D11::DoFlush() {
 					vai->minihash = ComputeMiniHash();
 					vai->status = VertexArrayInfoD3D11::VAI_HASHING;
 					vai->drawsUntilNextFullHash = 0;
-					DecodeVerts(); // writes to indexGen
+					DecodeVerts(decoded); // writes to indexGen
 					vai->numVerts = indexGen.VertexCount();
 					vai->prim = indexGen.Prim();
 					vai->maxIndex = indexGen.MaxIndex();
@@ -481,7 +456,7 @@ void DrawEngineD3D11::DoFlush() {
 						}
 						if (newMiniHash != vai->minihash || newHash != vai->hash) {
 							MarkUnreliable(vai);
-							DecodeVerts();
+							DecodeVerts(decoded);
 							goto rotateVBO;
 						}
 						if (vai->numVerts > 64) {
@@ -500,13 +475,13 @@ void DrawEngineD3D11::DoFlush() {
 						u32 newMiniHash = ComputeMiniHash();
 						if (newMiniHash != vai->minihash) {
 							MarkUnreliable(vai);
-							DecodeVerts();
+							DecodeVerts(decoded);
 							goto rotateVBO;
 						}
 					}
 
 					if (vai->vbo == 0) {
-						DecodeVerts();
+						DecodeVerts(decoded);
 						vai->numVerts = indexGen.VertexCount();
 						vai->prim = indexGen.Prim();
 						vai->maxIndex = indexGen.MaxIndex();
@@ -572,14 +547,14 @@ void DrawEngineD3D11::DoFlush() {
 					if (vai->lastFrame != gpuStats.numFlips) {
 						vai->numFrames++;
 					}
-					DecodeVerts();
+					DecodeVerts(decoded);
 					goto rotateVBO;
 				}
 			}
 
 			vai->lastFrame = gpuStats.numFlips;
 		} else {
-			DecodeVerts();
+			DecodeVerts(decoded);
 rotateVBO:
 			gpuStats.numUncachedVertsDrawn += indexGen.VertexCount();
 			useElements = !indexGen.SeenOnlyPurePrims() || prim == GE_PRIM_TRIANGLE_FAN;
@@ -650,7 +625,7 @@ rotateVBO:
 			}
 		}
 	} else {
-		DecodeVerts();
+		DecodeVerts(decoded);
 		bool hasColor = (lastVType_ & GE_VTYPE_COL_MASK) != GE_VTYPE_COL_NONE;
 		if (gstate.isModeThrough()) {
 			gstate_c.vertexFullAlpha = gstate_c.vertexFullAlpha && (hasColor || gstate.getMaterialAmbientA() == 255);
@@ -669,16 +644,14 @@ rotateVBO:
 		bool drawIndexed = false;
 		u16 *inds = decIndex;
 		TransformedVertex *drawBuffer = NULL;
-		SoftwareTransformResult result;
-		memset(&result, 0, sizeof(result));
-
-		SoftwareTransformParams params;
-		memset(&params, 0, sizeof(params));
+		SoftwareTransformResult result{};
+		SoftwareTransformParams params{};
 		params.decoded = decoded;
 		params.transformed = transformed;
 		params.transformedExpanded = transformedExpanded;
 		params.fbman = framebufferManager_;
 		params.texCache = textureCache_;
+		params.allowClear = true;
 		params.allowSeparateAlphaClear = false;  // D3D11 doesn't support separate alpha clears
 
 		int maxIndex = indexGen.MaxIndex();
@@ -784,10 +757,6 @@ rotateVBO:
 	// We only support GPU debugging on Windows, and that's the only use case for this.
 	host->GPUNotifyDraw();
 #endif
-}
-
-bool DrawEngineD3D11::IsCodePtrVertexDecoder(const u8 *ptr) const {
-	return decJitCache_->IsInSpace(ptr);
 }
 
 void DrawEngineD3D11::TessellationDataTransferD3D11::SendDataToShader(const float * pos, const float * tex, const float * col, int size, bool hasColor, bool hasTexCoords) {

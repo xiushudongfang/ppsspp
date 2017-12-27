@@ -130,10 +130,8 @@ public:
 	void FinishDeferred() {
 		if (!numDrawCalls)
 			return;
-		DecodeVerts();
+		DecodeVerts(decoded);
 	}
-
-	bool IsCodePtrVertexDecoder(const u8 *ptr) const;
 
 	void DispatchFlush() override { Flush(); }
 	void DispatchSubmitPrim(void *verts, void *inds, GEPrimitiveType prim, int vertexCount, u32 vertType, int *bytesRead) override {
@@ -141,7 +139,6 @@ public:
 	}
 
 private:
-	void DecodeVerts();
 	void DoFlush();
 
 	void ApplyDrawState(int prim);

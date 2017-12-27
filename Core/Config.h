@@ -57,12 +57,6 @@ enum class GPUBackend {
 	DIRECT3D11 = 2,
 	VULKAN = 3,
 };
-enum {
-	GPU_BACKEND_OPENGL = (int)GPUBackend::OPENGL,
-	GPU_BACKEND_DIRECT3D9 = (int)GPUBackend::DIRECT3D9,
-	GPU_BACKEND_DIRECT3D11 = (int)GPUBackend::DIRECT3D11,
-	GPU_BACKEND_VULKAN = (int)GPUBackend::VULKAN,
-};
 
 enum AudioBackendType {
 	AUDIO_BACKEND_AUTO,
@@ -105,6 +99,7 @@ public:
 	bool bUseFFV1;
 	bool bDumpFrames;
 	bool bDumpAudio;
+	bool bSaveLoadResetsAVdumping;
 	bool bEnableLogging;
 	bool bDumpDecryptedEboot;
 	bool bFullscreenOnDoubleclick;
@@ -132,8 +127,6 @@ public:
 	bool bFuncReplacements;
 	bool bHideSlowWarnings;
 
-	// Definitely cannot be changed while game is running.
-	bool bSeparateCPUThread;
 	bool bSeparateSASThread;
 	bool bSeparateIOThread;
 	int iIOTimingMethod;
@@ -144,6 +137,7 @@ public:
 	std::string sLastRemoteISOServer;
 	int iLastRemoteISOPort;
 	bool bRemoteISOManual;
+	bool bRemoteShareOnStartup;
 	std::string sRemoteISOSubdir;
 	bool bMemStickInserted;
 
@@ -161,7 +155,7 @@ public:
 	bool bHardwareTransform; // only used in the GLES backend
 	bool bSoftwareSkinning;  // may speed up some games
 
-	int iRenderingMode; // 0 = non-buffered rendering 1 = buffered rendering 2 = Read Framebuffer to memory (CPU) 3 = Read Framebuffer to memory (GPU)
+	int iRenderingMode; // 0 = non-buffered rendering 1 = buffered rendering
 	int iTexFiltering; // 1 = off , 2 = nearest , 3 = linear , 4 = linear(CG)
 	int iBufFilter; // 1 = linear, 2 = nearest
 	int iSmallDisplayZoomType;  // Used to fit display into screen 0 = stretch, 1 = partial stretch, 2 = auto scaling, 3 = manual scaling.
@@ -219,6 +213,7 @@ public:
 	bool bHardwareTessellation;
 	std::string sPostShaderName;  // Off for off.
 	bool bGfxDebugOutput;
+	bool bGfxDebugSplitSubmit;
 
 	// Sound
 	bool bEnableSound;
@@ -445,6 +440,7 @@ public:
 	int iButtonPreference;
 	int iLockParentalLevel;
 	bool bEncryptSave;
+	bool bSavedataUpgrade;
 
 	// Networking
 	bool bEnableWlan;

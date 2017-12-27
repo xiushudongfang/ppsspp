@@ -25,23 +25,13 @@ enum MSG_TYPE {
 	CRITICAL
 };
 
-extern bool MsgAlert(bool yes_no, int Style, const char* format, ...)
+bool MsgAlert(bool yes_no, int Style, const char* format, ...)
 #ifdef __GNUC__
 	__attribute__((format(printf, 3, 4)))
 #endif
 	;
-void SetEnableAlert(bool enable);
 
-#ifndef GEKKO
-#ifdef _WIN32
-	#define PanicAlert(format, ...) MsgAlert(false, WARNING, format, __VA_ARGS__) 
-	#define PanicYesNo(format, ...) MsgAlert(true, WARNING, format, __VA_ARGS__) 
-#else
-	#define PanicAlert(format, ...) MsgAlert(false, WARNING, format, ##__VA_ARGS__) 
-	#define PanicYesNo(format, ...) MsgAlert(true, WARNING, format, ##__VA_ARGS__) 
-#endif
-#else
-// GEKKO
-	#define PanicAlert(format, ...) ;
-	#define PanicYesNo(format, ...) ;
-#endif
+#define PanicAlert(...) MsgAlert(false, WARNING, __VA_ARGS__) 
+
+// Used only for asserts.
+#define PanicYesNo(...) MsgAlert(true, CRITICAL, __VA_ARGS__) 

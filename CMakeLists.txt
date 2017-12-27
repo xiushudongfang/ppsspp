@@ -13,12 +13,6 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/Modules)
 
 add_definitions(-D__STDC_CONSTANT_MACROS)
 
-# Of the CMake platforms, we only support Vulkan on Android and Windows.
-if(ANDROID OR WIN32)
-  set(VULKAN ON)
-else()
-  add_definitions(-DNO_VULKAN)
-endif()
 
 if(${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
   set(CLANG ON)
@@ -56,7 +50,7 @@ include(ccache)
 # Remove soon?
 set(USE_FFMPEG ON)
 
-if(NOT ANDROID)
+if(NOT ANDROID AND NOT IOS)
 	if(ARM OR SIMULATOR)
 		set(USING_EGL ON)
 	endif()
@@ -72,7 +66,14 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 endif()
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Android")
-  set(ANDROID ON)
+	set(ANDROID ON)
+endif()
+
+# We only support Vulkan on Unix, Android and Windows.
+if(ANDROID OR WIN32 OR (UNIX AND NOT APPLE))
+  set(VULKAN ON)
+else()
+  add_definitions(-DNO_VULKAN)
 endif()
 
 if(NOT DEFINED HEADLESS)
@@ -112,6 +113,20 @@ option(SIMULATOR "Set to ON when targeting an x86 simulator of an ARM platform" 
 # :: Options
 option(USE_FFMPEG "Build with FFMPEG support" ${USE_FFMPEG})
 option(USE_SYSTEM_FFMPEG "Dynamically link against system FFMPEG" ${USE_SYSTEM_FFMPEG})
+option(USE_WAYLAND_WSI "Set to ON to require Wayland support for Vulkan" ${USE_WAYLAND_WSI})
+
+if(UNIX AND NOT APPLE AND VULKAN)
+	add_definitions(-DVK_USE_PLATFORM_XLIB_KHR)
+	# add_definitions(-DVK_USE_PLATFORM_XCB_KHR)
+	find_package(Wayland)
+	if (USE_WAYLAND_WSI AND NOT WAYLAND_FOUND)
+		message(FATAL_ERROR "Could not find libwayland, but USE_WAYLAND_WSI was enabled. Failing.")
+	endif()
+	if (WAYLAND_FOUND)
+		include_directories(${WAYLAND_INCLUDE_DIR})
+		add_definitions(-DVK_USE_PLATFORM_WAYLAND_KHR)
+	endif()
+endif()
 
 if(ANDROID)
 	set(CoreLibName ppsspp_jni)
@@ -129,6 +144,13 @@ if(NOT OPENGL_LIBRARIES AND USING_GLES2)
 	set(OPENGL_LIBRARIES GLESv2)
 endif()
 
+if(USING_EGL)
+	if(NOT EGL_LIBRARIES)
+		set(EGL_LIBRARIES EGL)
+	endif()
+	set(OPENGL_LIBRARIES ${OPENGL_LIBRARIES} ${EGL_LIBRARIES})
+endif()
+
 if(NOT OPENGL_LIBRARIES)
 	find_package(OpenGL REQUIRED)
 endif()
@@ -140,7 +162,6 @@ if(APPLE)
 	find_library(COCOA_LIBRARY Cocoa)
 endif()
 
-# Needed for Globals.h
 include_directories("${CMAKE_SOURCE_DIR}")
 
 if(USING_EGL)
@@ -319,21 +340,19 @@ set(CommonWindows
 	Common/stdafx.h)
 source_group(Windows FILES ${CommonWindows})
 
-if(VULKAN)
-	set(CommonVulkan ${CommonExtra}
-		Common/Vulkan/SPIRVDisasm.cpp
-		Common/Vulkan/SPIRVDisasm.h
-		Common/Vulkan/VulkanContext.cpp
-		Common/Vulkan/VulkanContext.h
-		Common/Vulkan/VulkanImage.cpp
-		Common/Vulkan/VulkanImage.h
-		Common/Vulkan/VulkanLoader.cpp
-		Common/Vulkan/VulkanLoader.h
-		Common/Vulkan/VulkanMemory.cpp
-		Common/Vulkan/VulkanMemory.h)
-else()
-	set(CommonVulkan)
-endif()
+set(CommonVulkan ${CommonExtra}
+	Common/Vulkan/SPIRVDisasm.cpp
+	Common/Vulkan/SPIRVDisasm.h
+	Common/Vulkan/VulkanContext.cpp
+	Common/Vulkan/VulkanContext.h
+	Common/Vulkan/VulkanDebug.cpp
+	Common/Vulkan/VulkanDebug.h
+	Common/Vulkan/VulkanImage.cpp
+	Common/Vulkan/VulkanImage.h
+	Common/Vulkan/VulkanLoader.cpp
+	Common/Vulkan/VulkanLoader.h
+	Common/Vulkan/VulkanMemory.cpp
+	Common/Vulkan/VulkanMemory.h)
 
 add_library(Common STATIC
 	${CommonX86}
@@ -655,6 +674,10 @@ elseif(IOS)
 		ios/ViewController.h
 		ios/iOSCoreAudio.cpp
 		ios/iOSCoreAudio.h
+		ios/PPSSPPUIApplication.h
+		ios/PPSSPPUIApplication.mm
+		ios/SmartKeyboardMap.cpp
+		ios/SmartKeyboardMap.hpp
 		ios/iCade/iCadeReaderView.h
 		ios/iCade/iCadeReaderView.m
 		ios/iCade/iCadeState.h)
@@ -662,7 +685,7 @@ elseif(IOS)
 	if(EXISTS "${CMAKE_IOS_SDK_ROOT}/System/Library/Frameworks/GameController.framework")
 		set(nativeExtraLibs ${nativeExtraLibs} "-weak_framework GameController")
 	endif()
-	
+
 	if(NOT ICONV_LIBRARY)
 		set(nativeExtraLibs ${nativeExtraLibs} iconv)
 	endif()
@@ -687,8 +710,8 @@ elseif(USING_QT_UI)
     qt5_wrap_ui(QT_UI_GEN ${Qt_UI})
     list(APPEND NativeAppSource
       ${QT_UI_GEN}
-      ext/native/base/QtMain.cpp
-      ext/native/base/QtMain.h
+      Qt/QtMain.cpp
+      Qt/QtMain.h
       Qt/mainwindow.cpp
       Qt/mainwindow.h
       Qt/Debugger/ctrldisasmview.cpp
@@ -733,13 +756,13 @@ elseif(TARGET SDL2::SDL2)
 	set(nativeExtra ${nativeExtra}
 		SDL/SDLJoystick.h
 		SDL/SDLJoystick.cpp
-		ext/native/base/PCMain.cpp)
+		SDL/SDLMain.cpp)
 	set(nativeExtraLibs ${nativeExtraLibs} SDL2::SDL2)
 	if(APPLE)
 		set(nativeExtra ${nativeExtra} SDL/SDLMain.h SDL/SDLMain.mm)
 		set(nativeExtraLibs ${nativeExtraLibs} ${COCOA_LIBRARY})
 	elseif(USING_EGL)
-		set(nativeExtraLibs ${nativeExtraLibs} pthread EGL)
+		set(nativeExtraLibs ${nativeExtraLibs} pthread)
 	endif()
 	set(TargetBin PPSSPPSDL)
 elseif(WIN32)
@@ -796,9 +819,14 @@ if(ANDROID)
 endif()
 
 set(THIN3D_PLATFORMS ext/native/thin3d/thin3d_gl.cpp)
-if(VULKAN)
-  set(THIN3D_PLATFORMS ${THIN3D_PLATFORMS} ext/native/thin3d/thin3d_vulkan.cpp)
-endif()
+set(THIN3D_PLATFORMS ${THIN3D_PLATFORMS}
+	ext/native/thin3d/thin3d_vulkan.cpp
+	ext/native/thin3d/VulkanRenderManager.cpp
+	ext/native/thin3d/VulkanRenderManager.h
+	ext/native/thin3d/VulkanQueueRunner.cpp
+	ext/native/thin3d/VulkanQueueRunner.h
+	ext/native/thin3d/DataFormat.h)
+
 if(WIN32)
   set(THIN3D_PLATFORMS ${THIN3D_PLATFORMS}
     ext/native/thin3d/thin3d_d3d9.cpp
@@ -852,8 +880,6 @@ add_library(native STATIC
 	ext/native/gfx/gl_common.h
 	ext/native/gfx/gl_debug_log.cpp
 	ext/native/gfx/gl_debug_log.h
-	ext/native/gfx/gl_lost_manager.cpp
-	ext/native/gfx/gl_lost_manager.h
 	ext/native/gfx/texture_atlas.cpp
 	ext/native/gfx/texture_atlas.h
 	ext/native/gfx/d3d9_shader.cpp
@@ -943,6 +969,8 @@ add_library(native STATIC
 	ext/native/ui/ui_context.h
 	ext/native/ui/ui_screen.cpp
 	ext/native/ui/ui_screen.h
+	ext/native/ui/ui_tween.cpp
+	ext/native/ui/ui_tween.h
 	ext/native/ui/view.cpp
 	ext/native/ui/view.h
 	ext/native/ui/viewgroup.cpp
@@ -1162,6 +1190,7 @@ set(GPU_VULKAN
 	GPU/Vulkan/ShaderManagerVulkan.h
 	GPU/Vulkan/StateMappingVulkan.cpp
 	GPU/Vulkan/StateMappingVulkan.h
+	GPU/Vulkan/StencilBufferVulkan.cpp
 	GPU/Vulkan/TextureCacheVulkan.cpp
 	GPU/Vulkan/TextureCacheVulkan.h
 	GPU/Vulkan/TextureScalerVulkan.cpp
@@ -1252,8 +1281,12 @@ set(GPU_SOURCES
 	GPU/Common/ShaderUniforms.h
 	GPU/Common/ShaderCommon.cpp
 	GPU/Common/ShaderCommon.h
+	GPU/Common/ShaderTranslation.cpp
+	GPU/Common/ShaderTranslation.h
 	GPU/Common/SplineCommon.cpp
 	GPU/Common/SplineCommon.h
+	GPU/Common/StencilCommon.cpp
+	GPU/Common/StencilCommon.h
 	GPU/Common/SoftwareTransformCommon.cpp
 	GPU/Common/SoftwareTransformCommon.h
 	GPU/Common/VertexDecoderCommon.cpp
@@ -1500,6 +1533,8 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/HLE/sceUmd.h
 	Core/HLE/sceUsb.cpp
 	Core/HLE/sceUsb.h
+	Core/HLE/sceUsbCam.cpp
+	Core/HLE/sceUsbCam.h
 	Core/HLE/sceUsbGps.cpp
 	Core/HLE/sceUsbGps.h
 	Core/HLE/sceUtility.cpp
@@ -1602,7 +1637,6 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/Util/ppge_atlas.h
 	${CORE_NEON}
 	${GPU_SOURCES}
-	Globals.h
 	git-version.cpp
 	ext/disarm.cpp
 	git-version.cpp)
@@ -1610,13 +1644,19 @@ add_library(${CoreLibName} ${CoreLinkType}
 if(ANDROID)
   set(CoreExtraLibs ${CoreExtraLibs} android)
   if(X86_64)
-    set(CoreExtraLibs -Wl,--gc-sections -Wl,--exclude-libs,ALL)
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-Bsymbolic")
   endif()
-endif()	
- 
+endif()
+
 set(CoreExtraLibs ${CoreExtraLibs} armips)
 
-set(GlslangLibs glslang OGLCompiler OSDependent SPIRV SPVRemapper)
+# needed for VK_USE_PLATFORM_XCB_KHR only
+#if(VULKAN AND NOT WIN32)
+#	target_link_libraries(native X11-xcb X11)
+#endif()
+
+
+set(GlslangLibs glslang OGLCompiler OSDependent SPIRV SPVRemapper spirv-cross-glsl)
 
 target_link_libraries(${CoreLibName} Common native kirk cityhash sfmt19937 xbrz xxhash ${GlslangLibs}
 	${CoreExtraLibs} ${OPENGL_LIBRARIES} ${X11_LIBRARIES} ${CMAKE_DL_LIBS})
@@ -1765,9 +1805,12 @@ set(NativeAssets
 if(HEADLESS)
 	add_executable(PPSSPPHeadless
 		headless/Headless.cpp
+		headless/StubHost.cpp
 		headless/StubHost.h
 		headless/Compare.cpp
-		headless/Compare.h)
+		headless/Compare.h
+		headless/SDLHeadlessHost.cpp
+		headless/SDLHeadlessHost.h)
 	target_link_libraries(PPSSPPHeadless
 		${COCOA_LIBRARY} ${LinkCommon})
 	setup_target_project(PPSSPPHeadless headless)

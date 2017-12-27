@@ -21,6 +21,8 @@
 #include "ext/udis86/udis86.h"
 
 #include "Common/StringUtils.h"
+#include "Common/ChunkFile.h"
+
 #include "Core/Util/DisArm64.h"
 #include "Core/Config.h"
 
@@ -46,6 +48,20 @@ namespace MIPSComp {
 		jit->Compile(currentMIPS->pc);
 	}
 
+	void DoDummyJitState(PointerWrap &p) {
+		// This is here so the savestate matches between jit and non-jit.
+		auto s = p.Section("Jit", 1, 2);
+		if (!s)
+			return;
+
+		bool dummy = false;
+		p.Do(dummy);
+		if (s >= 2) {
+			dummy = true;
+			p.Do(dummy);
+		}
+	}
+
 	JitInterface *CreateNativeJit(MIPSState *mips) {
 #if PPSSPP_ARCH(ARM)
 		return new MIPSComp::ArmJit(mips);
@@ -61,7 +77,7 @@ namespace MIPSComp {
 	}
 
 }
-#if PPSSPP_PLATFORM(WINDOWS)
+#if PPSSPP_PLATFORM(WINDOWS) && !defined(__LIBRETRO__)
 #define DISASM_ALL 1
 #endif
 

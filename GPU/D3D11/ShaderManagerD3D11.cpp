@@ -38,7 +38,7 @@
 #include "GPU/D3D11/VertexShaderGeneratorD3D11.h"
 #include "GPU/D3D11/D3D11Util.h"
 
-D3D11FragmentShader::D3D11FragmentShader(ID3D11Device *device, D3D_FEATURE_LEVEL featureLevel, ShaderID id, const char *code, bool useHWTransform)
+D3D11FragmentShader::D3D11FragmentShader(ID3D11Device *device, D3D_FEATURE_LEVEL featureLevel, FShaderID id, const char *code, bool useHWTransform)
 	: device_(device), id_(id), failed_(false), useHWTransform_(useHWTransform), module_(0) {
 	source_ = code;
 
@@ -63,7 +63,7 @@ std::string D3D11FragmentShader::GetShaderString(DebugShaderStringType type) con
 	}
 }
 
-D3D11VertexShader::D3D11VertexShader(ID3D11Device *device, D3D_FEATURE_LEVEL featureLevel, ShaderID id, const char *code, int vertType, bool useHWTransform, bool usesLighting)
+D3D11VertexShader::D3D11VertexShader(ID3D11Device *device, D3D_FEATURE_LEVEL featureLevel, VShaderID id, const char *code, int vertType, bool useHWTransform, bool usesLighting)
 	: device_(device), id_(id), failed_(false), useHWTransform_(useHWTransform), module_(nullptr), usesLighting_(usesLighting) {
 	source_ = code;
 
@@ -124,8 +124,9 @@ void ShaderManagerD3D11::Clear() {
 	}
 	fsCache_.clear();
 	vsCache_.clear();
-	lastFSID_.clear();
-	lastVSID_.clear();
+	lastFSID_.set_invalid();
+	lastVSID_.set_invalid();
+	gstate_c.Dirty(DIRTY_VERTEXSHADER_STATE | DIRTY_FRAGMENTSHADER_STATE);
 }
 
 void ShaderManagerD3D11::ClearShaders() {
@@ -135,11 +136,11 @@ void ShaderManagerD3D11::ClearShaders() {
 }
 
 void ShaderManagerD3D11::DirtyLastShader() {
-	lastFSID_.clear();
-	lastVSID_.clear();
+	lastFSID_.set_invalid();
+	lastVSID_.set_invalid();
 	lastVShader_ = nullptr;
 	lastFShader_ = nullptr;
-	gstate_c.Dirty(DIRTY_VERTEXSHADER_STATE|DIRTY_FRAGMENTSHADER_STATE);
+	gstate_c.Dirty(DIRTY_VERTEXSHADER_STATE | DIRTY_FRAGMENTSHADER_STATE);
 }
 
 uint64_t ShaderManagerD3D11::UpdateUniforms() {
@@ -177,8 +178,8 @@ void ShaderManagerD3D11::BindUniforms() {
 }
 
 void ShaderManagerD3D11::GetShaders(int prim, u32 vertType, D3D11VertexShader **vshader, D3D11FragmentShader **fshader, bool useHWTransform) {
-	ShaderID VSID;
-	ShaderID FSID;
+	VShaderID VSID;
+	FShaderID FSID;
 
 	if (gstate_c.IsDirty(DIRTY_VERTEXSHADER_STATE)) {
 		gstate_c.Clean(DIRTY_VERTEXSHADER_STATE);
@@ -267,7 +268,7 @@ std::string ShaderManagerD3D11::DebugGetShaderString(std::string id, DebugShader
 	switch (type) {
 	case SHADER_TYPE_VERTEX:
 	{
-		auto iter = vsCache_.find(shaderId);
+		auto iter = vsCache_.find(VShaderID(shaderId));
 		if (iter == vsCache_.end()) {
 			return "";
 		}
@@ -276,7 +277,7 @@ std::string ShaderManagerD3D11::DebugGetShaderString(std::string id, DebugShader
 
 	case SHADER_TYPE_FRAGMENT:
 	{
-		auto iter = fsCache_.find(shaderId);
+		auto iter = fsCache_.find(FShaderID(shaderId));
 		if (iter == fsCache_.end()) {
 			return "";
 		}

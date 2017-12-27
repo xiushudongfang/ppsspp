@@ -41,7 +41,7 @@ static const char *vulkan_glsl_preamble =
 #define WRITE p+=sprintf
 
 // Missing: Z depth range
-bool GenerateVulkanGLSLFragmentShader(const ShaderID &id, char *buffer) {
+bool GenerateVulkanGLSLFragmentShader(const FShaderID &id, char *buffer) {
 	char *p = buffer;
 
 	const char *lastFragData = nullptr;
@@ -387,7 +387,7 @@ bool GenerateVulkanGLSLFragmentShader(const ShaderID &id, char *buffer) {
 	if (stencilToAlpha != REPLACE_ALPHA_NO) {
 		switch (replaceAlphaWithStencilType) {
 		case STENCIL_VALUE_UNIFORM:
-			replacedAlpha = "base.fogcoef_stencilreplace.z";
+			replacedAlpha = "base.stencilReplace";
 			break;
 
 		case STENCIL_VALUE_ZERO:
@@ -456,8 +456,20 @@ bool GenerateVulkanGLSLFragmentShader(const ShaderID &id, char *buffer) {
 	}
 
 	if (gstate_c.Supports(GPU_ROUND_FRAGMENT_DEPTH_TO_16BIT)) {
+		const double scale = DepthSliceFactor() * 65535.0;
+
 		WRITE(p, "  highp float z = gl_FragCoord.z;\n");
-		WRITE(p, "  z = (1.0/65535.0) * floor(z * 65535.0);\n");
+		if (gstate_c.Supports(GPU_SUPPORTS_ACCURATE_DEPTH)) {
+			// We center the depth with an offset, but only its fraction matters.
+			// When (DepthSliceFactor() - 1) is odd, it will be 0.5, otherwise 0.
+			if (((int)(DepthSliceFactor() - 1.0f) & 1) == 1) {
+				WRITE(p, "  z = (floor((z * %f) - (1.0 / 2.0)) + (1.0 / 2.0)) * (1.0 / %f);\n", scale, scale);
+			} else {
+				WRITE(p, "  z = floor(z * %f) * (1.0 / %f);\n", scale, scale);
+			}
+		} else {
+			WRITE(p, "  z = (1.0/65535.0) * floor(z * 65535.0);\n");
+		}
 		WRITE(p, "  gl_FragDepth = z;\n");
 	}
 

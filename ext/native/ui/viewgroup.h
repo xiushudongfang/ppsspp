@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cfloat>
 #include <vector>
 #include <set>
 #include <mutex>
@@ -10,6 +11,8 @@
 #include "ui/view.h"
 
 namespace UI {
+
+class AnchorTranslateTween;
 
 struct NeighborResult {
 	NeighborResult() : view(0), score(0) {}
@@ -95,9 +98,7 @@ public:
 	void Layout() override;
 };
 
-enum {
-	NONE = -1,
-};
+const float NONE = -FLT_MAX;
 
 class AnchorLayoutParams : public LayoutParams {
 public:
@@ -132,6 +133,7 @@ public:
 	std::string Describe() const override { return "AnchorLayout: " + View::Describe(); }
 
 private:
+	void MeasureViews(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert);
 	bool overflow_;
 };
 
@@ -304,16 +306,11 @@ public:
 
 	template <class T>
 	T *AddTab(const std::string &title, T *tabContents) {
-		tabContents->ReplaceLayoutParams(new LinearLayoutParams(1.0f));
-		tabs_.push_back(tabContents);
-		tabStrip_->AddChoice(title);
-		Add(tabContents);
-		if (tabs_.size() > 1)
-			tabContents->SetVisibility(V_GONE);
+		AddTabContents(title, (View *)tabContents);
 		return tabContents;
 	}
 
-	void SetCurrentTab(int tab);
+	void SetCurrentTab(int tab, bool skipTween = false);
 
 	int GetCurrentTab() const { return currentTab_; }
 	std::string Describe() const override { return "TabHolder: " + View::Describe(); }
@@ -321,14 +318,17 @@ public:
 	void PersistData(PersistStatus status, std::string anonId, PersistMap &storage) override;
 
 private:
+	void AddTabContents(const std::string &title, View *tabContents);
 	EventReturn OnTabClick(EventParams &e);
 
-	ChoiceStrip *tabStrip_;
-	ScrollView *tabScroll_;
+	ChoiceStrip *tabStrip_ = nullptr;
+	ScrollView *tabScroll_ = nullptr;
+	AnchorLayout *contents_ = nullptr;
 
 	float stripSize_;
-	int currentTab_;
+	int currentTab_ = 0;
 	std::vector<View *> tabs_;
+	std::vector<AnchorTranslateTween *> tabTweens_;
 };
 
 // Yes, this feels a bit Java-ish...

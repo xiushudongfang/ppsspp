@@ -172,8 +172,8 @@ private:
 	UI::EventReturn OnSaveState(UI::EventParams &e);
 	UI::EventReturn OnLoadState(UI::EventParams &e);
 
-	UI::Button *saveStateButton_;
-	UI::Button *loadStateButton_;
+	UI::Button *saveStateButton_ = nullptr;
+	UI::Button *loadStateButton_ = nullptr;
 
 	int slot_;
 	std::string gamePath_;
@@ -334,7 +334,7 @@ void GamePauseScreen::CreateViews() {
 
 	// TODO, also might be nice to show overall compat rating here?
 	// Based on their platform or even cpu/gpu/config.  Would add an API for it.
-	if (Reporting::IsSupported() && gameId.size() && gameId != "_") {
+	if (Reporting::IsSupported() && g_paramSFO.GetValueString("DISC_ID").size()) {
 		I18NCategory *rp = GetI18NCategory("Reporting");
 		rightColumnItems->Add(new Choice(rp->T("ReportButton", "Report Feedback")))->OnClick.Handle(this, &GamePauseScreen::OnReportFeedback);
 	}
@@ -433,6 +433,7 @@ UI::EventReturn GamePauseScreen::OnCreateConfig(UI::EventParams &e)
 	screenManager()->topScreen()->RecreateViews();
 	return UI::EVENT_DONE;
 }
+
 UI::EventReturn GamePauseScreen::OnDeleteConfig(UI::EventParams &e)
 {
 	I18NCategory *di = GetI18NCategory("Dialog");
@@ -442,14 +443,4 @@ UI::EventReturn GamePauseScreen::OnDeleteConfig(UI::EventParams &e)
 		std::bind(&GamePauseScreen::CallbackDeleteConfig, this, std::placeholders::_1)));
 
 	return UI::EVENT_DONE;
-}
-
-
-void GamePauseScreen::sendMessage(const char *message, const char *value) {
-	UIDialogScreenWithGameBackground::sendMessage(message, value);
-	// Since the language message isn't allowed to be in native, we have to have add this
-	// to every screen which directly inherits from UIScreen(which are few right now, luckily).
-	if (!strcmp(message, "language")) {
-		screenManager()->RecreateAllViews();
-	}
 }

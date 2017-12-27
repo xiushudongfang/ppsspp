@@ -65,12 +65,12 @@ using namespace X64JitConstants;
 static const float one = 1.0f;
 static const float minus_one = -1.0f;
 
-const u32 MEMORY_ALIGNED16( noSignMask[4] ) = {0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF};
-const u32 MEMORY_ALIGNED16( signBitAll[4] ) = {0x80000000, 0x80000000, 0x80000000, 0x80000000};
-const u32 MEMORY_ALIGNED16( signBitLower[4] ) = {0x80000000, 0, 0, 0};
-const float MEMORY_ALIGNED16( oneOneOneOne[4] ) = {1.0f, 1.0f, 1.0f, 1.0f};
-const u32 MEMORY_ALIGNED16( fourinfnan[4] ) = {0x7F800000, 0x7F800000, 0x7F800000, 0x7F800000};
-const float MEMORY_ALIGNED16( identityMatrix[4][4]) = { { 1.0f, 0, 0, 0 }, { 0, 1.0f, 0, 0 }, { 0, 0, 1.0f, 0 }, { 0, 0, 0, 1.0f} };
+alignas(16) const u32 noSignMask[4] = {0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF};
+alignas(16) const u32 signBitAll[4] = {0x80000000, 0x80000000, 0x80000000, 0x80000000};
+alignas(16) const u32 signBitLower[4] = {0x80000000, 0, 0, 0};
+alignas(16) const float oneOneOneOne[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+alignas(16) const u32 fourinfnan[4] = {0x7F800000, 0x7F800000, 0x7F800000, 0x7F800000};
+alignas(16) const float identityMatrix[4][4] = { { 1.0f, 0, 0, 0 }, { 0, 1.0f, 0, 0 }, { 0, 0, 1.0f, 0 }, { 0, 0, 0, 1.0f} };
 
 void Jit::Comp_VPFX(MIPSOpcode op)
 {
@@ -236,7 +236,7 @@ bool IsOverlapSafe(int dreg, int di, int sn, u8 sregs[], int tn = 0, u8 tregs[] 
 	return IsOverlapSafeAllowS(dreg, di, sn, sregs, tn, tregs) && sregs[di] != dreg;
 }
 
-static u32 MEMORY_ALIGNED16(ssLoadStoreTemp);
+alignas(16) static u32 ssLoadStoreTemp;
 
 void Jit::Comp_SV(MIPSOpcode op) {
 	CONDITIONAL_DISABLE;
@@ -252,7 +252,6 @@ void Jit::Comp_SV(MIPSOpcode op) {
 			fpr.MapRegV(vt, MAP_DIRTY | MAP_NOINIT);
 
 			JitSafeMem safe(this, rs, imm);
-			safe.SetFar();
 			OpArg src;
 			if (safe.PrepareRead(src, 4)) {
 				MOVSS(fpr.VX(vt), safe.NextFastAddress(0));
@@ -274,7 +273,6 @@ void Jit::Comp_SV(MIPSOpcode op) {
 			fpr.MapRegV(vt, 0);
 
 			JitSafeMem safe(this, rs, imm);
-			safe.SetFar();
 			OpArg dest;
 			if (safe.PrepareWrite(dest, 4)) {
 				MOVSS(safe.NextFastAddress(0), fpr.VX(vt));
@@ -391,7 +389,6 @@ void Jit::Comp_SVQ(MIPSOpcode op) {
 
 			if (fpr.TryMapRegsVS(vregs, V_Quad, MAP_NOINIT | MAP_DIRTY)) {
 				JitSafeMem safe(this, rs, imm);
-				safe.SetFar();
 				OpArg src;
 				if (safe.PrepareRead(src, 16)) {
 					// Should be safe, since lv.q must be aligned, but let's try to avoid crashing in safe mode.
@@ -421,7 +418,6 @@ void Jit::Comp_SVQ(MIPSOpcode op) {
 			fpr.MapRegsV(vregs, V_Quad, MAP_DIRTY | MAP_NOINIT);
 
 			JitSafeMem safe(this, rs, imm);
-			safe.SetFar();
 			OpArg src;
 			if (safe.PrepareRead(src, 16)) {
 				// Just copy 4 words the easiest way while not wasting registers.
@@ -454,7 +450,6 @@ void Jit::Comp_SVQ(MIPSOpcode op) {
 
 			if (fpr.TryMapRegsVS(vregs, V_Quad, 0)) {
 				JitSafeMem safe(this, rs, imm);
-				safe.SetFar();
 				OpArg dest;
 				if (safe.PrepareWrite(dest, 16)) {
 					// Should be safe, since sv.q must be aligned, but let's try to avoid crashing in safe mode.
@@ -482,7 +477,6 @@ void Jit::Comp_SVQ(MIPSOpcode op) {
 			fpr.MapRegsV(vregs, V_Quad, 0);
 
 			JitSafeMem safe(this, rs, imm);
-			safe.SetFar();
 			OpArg dest;
 			if (safe.PrepareWrite(dest, 16)) {
 				for (int i = 0; i < 4; i++)
@@ -1267,7 +1261,7 @@ void Jit::Comp_VecDo3(MIPSOpcode op) {
 	fpr.ReleaseSpillLocks();
 }
 
-static const u32 MEMORY_ALIGNED16( vcmpMask[4][4] ) = {
+alignas(16) static const u32 vcmpMask[4][4] = {
 	{0x00000031, 0x00000000, 0x00000000, 0x00000000},
 	{0x00000011, 0x00000012, 0x00000000, 0x00000000},
 	{0x00000011, 0x00000012, 0x00000014, 0x00000000},
@@ -1548,7 +1542,7 @@ void Jit::Comp_Vi2f(MIPSOpcode op) {
 
 	if (*mult != 1.0f) {
 		if (RipAccessible(mult)) {
-			MOVSS(XMM1, M(mult));
+			MOVSS(XMM1, M(mult));  // rip accessible
 		} else {
 			MOV(PTRBITS, R(TEMPREG), ImmPtr(mult));
 			MOVSS(XMM1, MatR(TEMPREG));
@@ -1609,7 +1603,7 @@ void Jit::Comp_Vh2f(MIPSOpcode op) {
 	if (js.HasUnknownPrefix())
 		DISABLE;
 
-#define SSE_CONST4(name, val) static const u32 MEMORY_ALIGNED16(name[4]) = { (val), (val), (val), (val) }
+#define SSE_CONST4(name, val) alignas(16) static const u32 name[4] = { (val), (val), (val), (val) }
 
 	SSE_CONST4(mask_nosign,         0x7fff);
 	SSE_CONST4(magic,               (254 - 15) << 23);
@@ -1656,14 +1650,14 @@ void Jit::Comp_Vh2f(MIPSOpcode op) {
 	// OK, 16 bits in each word.
 	// Let's go. Deep magic here.
 	MOVAPS(XMM1, R(XMM0));
-	ANDPS(XMM0, M(&mask_nosign[0])); // xmm0 = expmant
+	ANDPS(XMM0, M(&mask_nosign[0])); // xmm0 = expmant. not rip accessible but bailing above
 	XORPS(XMM1, R(XMM0));  // xmm1 = justsign = expmant ^ xmm0
 	MOVAPS(tempR, R(XMM0));
-	PCMPGTD(tempR, M(&was_infnan[0]));  // xmm2 = b_wasinfnan
+	PCMPGTD(tempR, M(&was_infnan[0]));  // xmm2 = b_wasinfnan. not rip accessible but bailing above
 	PSLLD(XMM0, 13);
 	MULPS(XMM0, M(magic));  /// xmm0 = scaled
 	PSLLD(XMM1, 16);  // xmm1 = sign
-	ANDPS(tempR, M(&exp_infnan[0]));
+	ANDPS(tempR, M(&exp_infnan[0])); // not rip accessible but bailing above
 	ORPS(XMM1, R(tempR));
 	ORPS(XMM0, R(XMM1));
 
@@ -1689,9 +1683,9 @@ void Jit::Comp_Vh2f(MIPSOpcode op) {
 
 // The goal is to map (reversed byte order for clarity):
 // AABBCCDD -> 000000AA 000000BB 000000CC 000000DD
-static s8 MEMORY_ALIGNED16( vc2i_shuffle[16] ) = { -1, -1, -1, 0,  -1, -1, -1, 1,  -1, -1, -1, 2,  -1, -1, -1, 3 };
+alignas(16) static s8 vc2i_shuffle[16] = { -1, -1, -1, 0,  -1, -1, -1, 1,  -1, -1, -1, 2,  -1, -1, -1, 3 };
 // AABBCCDD -> AAAAAAAA BBBBBBBB CCCCCCCC DDDDDDDD
-static s8 MEMORY_ALIGNED16( vuc2i_shuffle[16] ) = { 0, 0, 0, 0,  1, 1, 1, 1,  2, 2, 2, 2,  3, 3, 3, 3 };
+alignas(16) static s8 vuc2i_shuffle[16] = { 0, 0, 0, 0,  1, 1, 1, 1,  2, 2, 2, 2,  3, 3, 3, 3 };
 
 void Jit::Comp_Vx2i(MIPSOpcode op) {
 	CONDITIONAL_DISABLE;
@@ -1747,9 +1741,9 @@ void Jit::Comp_Vx2i(MIPSOpcode op) {
 			// vuc2i is a bit special.  It spreads out the bits like this:
 			// s[0] = 0xDDCCBBAA -> d[0] = (0xAAAAAAAA >> 1), d[1] = (0xBBBBBBBB >> 1), etc.
 			MOVSS(XMM0, fpr.V(sregs[0]));
-			if (cpu_info.bSSSE3) {
+			if (cpu_info.bSSSE3 && RipAccessible(vuc2i_shuffle)) {
 				// Not really different speed.  Generates a bit less code.
-				PSHUFB(XMM0, M(&vuc2i_shuffle[0]));
+				PSHUFB(XMM0, M(&vuc2i_shuffle[0]));  // rip accessible
 			} else {
 				// First, we change 0xDDCCBBAA to 0xDDDDCCCCBBBBAAAA.
 				PUNPCKLBW(XMM0, R(XMM0));
@@ -1757,7 +1751,7 @@ void Jit::Comp_Vx2i(MIPSOpcode op) {
 				PUNPCKLWD(XMM0, R(XMM0));
 			}
 		} else {
-			if (cpu_info.bSSSE3) {
+			if (cpu_info.bSSSE3 && RipAccessible(vc2i_shuffle)) {
 				MOVSS(XMM0, fpr.V(sregs[0]));
 				PSHUFB(XMM0, M(&vc2i_shuffle[0]));
 			} else {
@@ -3164,9 +3158,9 @@ void Jit::Comp_VDet(MIPSOpcode op) {
 
 // The goal is to map (reversed byte order for clarity):
 // 000000AA 000000BB 000000CC 000000DD -> AABBCCDD
-static s8 MEMORY_ALIGNED16( vi2xc_shuffle[16] ) = { 3, 7, 11, 15,  -1, -1, -1, -1,  -1, -1, -1, -1,  -1, -1, -1, -1 };
+alignas(16) static const s8 vi2xc_shuffle[16] = { 3, 7, 11, 15,  -1, -1, -1, -1,  -1, -1, -1, -1,  -1, -1, -1, -1 };
 // 0000AAAA 0000BBBB 0000CCCC 0000DDDD -> AAAABBBB CCCCDDDD
-static s8 MEMORY_ALIGNED16( vi2xs_shuffle[16] ) = { 2, 3, 6, 7,  10, 11, 14, 15,  -1, -1, -1, -1,  -1, -1, -1, -1 };
+alignas(16) static const s8 vi2xs_shuffle[16] = { 2, 3, 6, 7,  10, 11, 14, 15,  -1, -1, -1, -1,  -1, -1, -1, -1 };
 
 void Jit::Comp_Vi2x(MIPSOpcode op) {
 	CONDITIONAL_DISABLE;
@@ -3269,7 +3263,7 @@ void Jit::Comp_Vi2x(MIPSOpcode op) {
 	// At this point, everything is aligned in the high bits of our lanes.
 	if (cpu_info.bSSSE3) {
 		if (RipAccessible(vi2xc_shuffle)) {
-			PSHUFB(dst0, bits == 8 ? M(vi2xc_shuffle) : M(vi2xs_shuffle));
+			PSHUFB(dst0, bits == 8 ? M(vi2xc_shuffle) : M(vi2xs_shuffle));  // rip accessible
 		} else {
 			MOV(PTRBITS, R(TEMPREG), bits == 8 ? ImmPtr(vi2xc_shuffle) : ImmPtr(vi2xs_shuffle));
 			PSHUFB(dst0, MatR(TEMPREG));
@@ -3298,7 +3292,7 @@ void Jit::Comp_Vi2x(MIPSOpcode op) {
 	fpr.ReleaseSpillLocks();
 }
 
-static const float MEMORY_ALIGNED16(vavg_table[4]) = { 1.0f, 1.0f / 2.0f, 1.0f / 3.0f, 1.0f / 4.0f };
+alignas(16) static const float vavg_table[4] = { 1.0f, 1.0f / 2.0f, 1.0f / 3.0f, 1.0f / 4.0f };
 
 void Jit::Comp_Vhoriz(MIPSOpcode op) {
 	CONDITIONAL_DISABLE;

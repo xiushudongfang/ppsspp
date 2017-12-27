@@ -1,7 +1,11 @@
+#include <cassert>
 #include <cstring>
-#include <thin3d/thin3d.h>
+#include <cstdint>
 
 #include "base/logging.h"
+#include "thin3d/thin3d.h"
+#include "Common/Log.h"
+#include "Common/ColorConv.h"
 
 namespace Draw {
 
@@ -11,6 +15,7 @@ size_t DataFormatSizeInBytes(DataFormat fmt) {
 	case DataFormat::R8G8_UNORM: return 2;
 	case DataFormat::R8G8B8_UNORM: return 3;
 
+	case DataFormat::R4G4_UNORM_PACK8: return 1;
 	case DataFormat::R4G4B4A4_UNORM_PACK16: return 2;
 	case DataFormat::B4G4R4A4_UNORM_PACK16: return 2;
 	case DataFormat::A4R4G4B4_UNORM_PACK16: return 2;
@@ -36,10 +41,31 @@ size_t DataFormatSizeInBytes(DataFormat fmt) {
 	case DataFormat::R32G32B32_FLOAT: return 12;
 	case DataFormat::R32G32B32A32_FLOAT: return 16;
 
+	case DataFormat::S8: return 1;
+	case DataFormat::D16: return 2;
+	case DataFormat::D24_S8: return 4;
+	case DataFormat::D32F: return 4;
+	// Or maybe 8...
+	case DataFormat::D32F_S8: return 5;
+
 	default:
 		return 0;
 	}
 }
+
+bool DataFormatIsDepthStencil(DataFormat fmt) {
+	switch (fmt) {
+	case DataFormat::D16:
+	case DataFormat::D24_S8:
+	case DataFormat::S8:
+	case DataFormat::D32F:
+	case DataFormat::D32F_S8:
+		return true;
+	default:
+		return false;
+	}
+}
+
 
 bool RefCountedObject::Release() {
 	if (refcount_ > 0 && refcount_ < 10000) {
@@ -50,10 +76,25 @@ bool RefCountedObject::Release() {
 		}
 	}
 	else {
+		_dbg_assert_msg_(G3D, false, "Refcount (%d) invalid for object %p - corrupt?", refcount_, this);
+	}
+	return false;
+}
+
+bool RefCountedObject::ReleaseAssertLast() {
+	_dbg_assert_msg_(G3D, refcount_ == 1, "RefCountedObject: Expected to be the last reference, but isn't!");
+	if (refcount_ > 0 && refcount_ < 10000) {
+		refcount_--;
+		if (refcount_ == 0) {
+			delete this;
+			return true;
+		}
+	} else {
 		ELOG("Refcount (%d) invalid for object %p - corrupt?", refcount_, this);
 	}
 	return false;
 }
+
 
 // ================================== PIXEL/FRAGMENT SHADERS
 
@@ -68,6 +109,12 @@ static const std::vector<ShaderSource> fsTexCol = {
 	{ShaderLanguage::GLSL_ES_200,
 	"#ifdef GL_ES\n"
 	"precision lowp float;\n"
+	"#endif\n"
+	"#if __VERSION__ >= 130\n"
+	"#define varying in\n"
+	"#define texture2D texture\n"
+	"#define gl_FragColor fragColor0\n"
+	"out vec4 fragColor0;\n"
 	"#endif\n"
 	"varying vec4 oColor0;\n"
 	"varying vec2 oTexCoord0;\n"
@@ -107,6 +154,11 @@ static const std::vector<ShaderSource> fsCol = {
 	"#ifdef GL_ES\n"
 	"precision lowp float;\n"
 	"#endif\n"
+	"#if __VERSION__ >= 130\n"
+	"#define varying in\n"
+	"#define gl_FragColor fragColor0\n"
+	"out vec4 fragColor0;\n"
+	"#endif\n"
 	"varying vec4 oColor0;\n"
 	"void main() { gl_FragColor = oColor0; }\n"
 	},
@@ -136,6 +188,10 @@ static const std::vector<ShaderSource> fsCol = {
 
 static const std::vector<ShaderSource> vsCol = {
 	{ ShaderLanguage::GLSL_ES_200,
+	"#if __VERSION__ >= 130\n"
+	"#define attribute in\n"
+	"#define varying out\n"
+	"#endif\n"
 	"attribute vec3 Position;\n"
 	"attribute vec4 Color0;\n"
 	"varying vec4 oColor0;\n"
@@ -193,6 +249,10 @@ const UniformBufferDesc vsColBufDesc { sizeof(VsColUB), {
 
 static const std::vector<ShaderSource> vsTexCol = {
 	{ ShaderLanguage::GLSL_ES_200,
+	"#if __VERSION__ >= 130\n"
+	"#define attribute in\n"
+	"#define varying out\n"
+	"#endif\n"
 	"attribute vec3 Position;\n"
 	"attribute vec4 Color0;\n"
 	"attribute vec2 TexCoord0;\n"
@@ -266,12 +326,14 @@ static ShaderModule *CreateShader(DrawContext *draw, ShaderStage stage, const st
 	return nullptr;
 }
 
-void DrawContext::CreatePresets() {
+bool DrawContext::CreatePresets() {
 	vsPresets_[VS_TEXTURE_COLOR_2D] = CreateShader(this, ShaderStage::VERTEX, vsTexCol);
 	vsPresets_[VS_COLOR_2D] = CreateShader(this, ShaderStage::VERTEX, vsCol);
 
 	fsPresets_[FS_TEXTURE_COLOR_2D] = CreateShader(this, ShaderStage::FRAGMENT, fsTexCol);
 	fsPresets_[FS_COLOR_2D] = CreateShader(this, ShaderStage::FRAGMENT, fsCol);
+
+	return vsPresets_[VS_TEXTURE_COLOR_2D] && vsPresets_[VS_COLOR_2D] && fsPresets_[FS_TEXTURE_COLOR_2D] && fsPresets_[FS_COLOR_2D];
 }
 
 DrawContext::~DrawContext() {
@@ -284,5 +346,113 @@ DrawContext::~DrawContext() {
 			fsPresets_[i]->Release();
 	}
 }
+
+// TODO: SSE/NEON
+// Could also make C fake-simd for 64-bit, two 8888 pixels fit in a register :)
+void ConvertFromRGBA8888(uint8_t *dst, const uint8_t *src, uint32_t dstStride, uint32_t srcStride, uint32_t width, uint32_t height, DataFormat format) {
+	// Must skip stride in the cases below.  Some games pack data into the cracks, like MotoGP.
+	const uint32_t *src32 = (const uint32_t *)src;
+
+	if (format == Draw::DataFormat::R8G8B8A8_UNORM) {
+		uint32_t *dst32 = (uint32_t *)dst;
+		if (src == dst) {
+			return;
+		} else {
+			for (uint32_t y = 0; y < height; ++y) {
+				memcpy(dst32, src32, width * 4);
+				src32 += srcStride;
+				dst32 += dstStride;
+			}
+		}
+	} else {
+		// But here it shouldn't matter if they do intersect
+		uint16_t *dst16 = (uint16_t *)dst;
+		switch (format) {
+		case Draw::DataFormat::R5G6B5_UNORM_PACK16: // BGR 565
+			for (uint32_t y = 0; y < height; ++y) {
+				ConvertRGBA8888ToRGB565(dst16, src32, width);
+				src32 += srcStride;
+				dst16 += dstStride;
+			}
+			break;
+		case Draw::DataFormat::A1R5G5B5_UNORM_PACK16: // ABGR 1555
+			for (uint32_t y = 0; y < height; ++y) {
+				ConvertRGBA8888ToRGBA5551(dst16, src32, width);
+				src32 += srcStride;
+				dst16 += dstStride;
+			}
+			break;
+		case Draw::DataFormat::A4R4G4B4_UNORM_PACK16: // ABGR 4444
+			for (uint32_t y = 0; y < height; ++y) {
+				ConvertRGBA8888ToRGBA4444(dst16, src32, width);
+				src32 += srcStride;
+				dst16 += dstStride;
+			}
+			break;
+		case Draw::DataFormat::R8G8B8A8_UNORM:
+		case Draw::DataFormat::UNDEFINED:
+			// Not possible.
+			break;
+		}
+	}
+}
+
+// TODO: SSE/NEON
+// Could also make C fake-simd for 64-bit, two 8888 pixels fit in a register :)
+void ConvertFromBGRA8888(uint8_t *dst, const uint8_t *src, uint32_t dstStride, uint32_t srcStride, uint32_t width, uint32_t height, DataFormat format) {
+	// Must skip stride in the cases below.  Some games pack data into the cracks, like MotoGP.
+	const uint32_t *src32 = (const uint32_t *)src;
+
+	if (format == Draw::DataFormat::R8G8B8A8_UNORM) {
+		uint32_t *dst32 = (uint32_t *)dst;
+		for (uint32_t y = 0; y < height; ++y) {
+			ConvertBGRA8888ToRGBA8888(dst32, src32, width);
+			src32 += srcStride;
+			dst32 += dstStride;
+		}
+	}
+	else {
+		// Don't even bother with these, this path only happens in screenshots and we don't save those to 16-bit.
+		assert(false);
+	}
+}
+void ConvertToD32F(uint8_t *dst, const uint8_t *src, uint32_t dstStride, uint32_t srcStride, uint32_t width, uint32_t height, DataFormat format) {
+	if (format == Draw::DataFormat::D32F) {
+		const float *src32 = (const float *)src;
+		float *dst32 = (float *)dst;
+		if (src == dst) {
+			return;
+		} else {
+			for (uint32_t y = 0; y < height; ++y) {
+				memcpy(dst32, src32, width * 4);
+				src32 += srcStride;
+				dst32 += dstStride;
+			}
+		}
+	} else if (format == Draw::DataFormat::D16) {
+		const uint16_t *src16 = (const uint16_t *)src;
+		float *dst32 = (float *)dst;
+		for (uint32_t y = 0; y < height; ++y) {
+			for (uint32_t x = 0; x < width; ++x) {
+				dst32[x] = (float)(int)src16[x] / 65535.0f;
+			}
+			src16 += srcStride;
+			dst32 += dstStride;
+		}
+	} else if (format == Draw::DataFormat::D24_S8) {
+		const uint32_t *src32 = (const uint32_t *)src;
+		float *dst32 = (float *)dst;
+		for (uint32_t y = 0; y < height; ++y) {
+			for (uint32_t x = 0; x < width; ++x) {
+				dst32[x] = (src32[x] & 0x00FFFFFF) / 16777215.0f;
+			}
+			src32 += srcStride;
+			dst32 += dstStride;
+		}
+	} else {
+		assert(false);
+	}
+}
+
 
 }  // namespace Draw

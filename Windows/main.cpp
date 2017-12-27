@@ -65,7 +65,7 @@
 #include "Windows/main.h"
 
 
-// Nvidia drivers >= v302 will check if the application exports a global
+// Nvidia OpenGL drivers >= v302 will check if the application exports a global
 // variable named NvOptimusEnablement to know if it should run the app in high
 // performance graphics mode or using the IGP.
 extern "C" {
@@ -79,6 +79,9 @@ CMemoryDlg *memoryWindow[MAX_CPUCOUNT] = {0};
 static std::string langRegion;
 static std::string osName;
 static std::string gpuDriverVersion;
+
+HMENU g_hPopupMenus;
+int g_activeWindow = 0;
 
 void LaunchBrowser(const char *url) {
 	ShellExecute(NULL, L"open", ConvertUTF8ToWString(url).c_str(), NULL, NULL, SW_SHOWNORMAL);
@@ -463,19 +466,19 @@ int WINAPI WinMain(HINSTANCE _hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLin
 				// such as "software-gles", "software-d3d9", and "software-d3d11", or something similar.
 				// For now, software rendering force-activates OpenGL.
 				if (restOfOption == L"directx9") {
-					g_Config.iGPUBackend = GPU_BACKEND_DIRECT3D9;
+					g_Config.iGPUBackend = (int)GPUBackend::DIRECT3D9;
 					g_Config.bSoftwareRendering = false;
 				} else if (restOfOption == L"directx11") {
-					g_Config.iGPUBackend = GPU_BACKEND_DIRECT3D11;
+					g_Config.iGPUBackend = (int)GPUBackend::DIRECT3D11;
 					g_Config.bSoftwareRendering = false;
 				} else if (restOfOption == L"gles") {
-					g_Config.iGPUBackend = GPU_BACKEND_OPENGL;
+					g_Config.iGPUBackend = (int)GPUBackend::OPENGL;
 					g_Config.bSoftwareRendering = false;
 				} else if (restOfOption == L"vulkan") {
-					g_Config.iGPUBackend = GPU_BACKEND_VULKAN;
+					g_Config.iGPUBackend = (int)GPUBackend::VULKAN;
 					g_Config.bSoftwareRendering = false;
 				} else if (restOfOption == L"software") {
-					g_Config.iGPUBackend = GPU_BACKEND_OPENGL;
+					g_Config.iGPUBackend = (int)GPUBackend::OPENGL;
 					g_Config.bSoftwareRendering = true;
 				}
 			}

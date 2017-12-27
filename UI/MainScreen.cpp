@@ -527,7 +527,7 @@ void GameBrowser::Refresh() {
 		}
 	} else {
 		std::vector<FileInfo> fileInfo;
-		path_.GetListing(fileInfo, "iso:cso:pbp:elf:prx:");
+		path_.GetListing(fileInfo, "iso:cso:pbp:elf:prx:ppdmp:");
 		for (size_t i = 0; i < fileInfo.size(); i++) {
 			bool isGame = !fileInfo[i].isDirectory;
 			bool isSaveData = false;
@@ -734,12 +734,12 @@ void MainScreen::CreateViews() {
 
 	Margins actionMenuMargins(0, 10, 10, 0);
 
-	TabHolder *leftColumn = new TabHolder(ORIENT_HORIZONTAL, 64, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
-	tabHolder_ = leftColumn;
+	tabHolder_ = new TabHolder(ORIENT_HORIZONTAL, 64, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, 1.0f));
+	ViewGroup *leftColumn = tabHolder_;
 	tabHolder_->SetTag("MainScreenGames");
 	gameBrowsers_.clear();
 
-	leftColumn->SetClip(true);
+	tabHolder_->SetClip(true);
 
 	bool showRecent = g_Config.iMaxRecent > 0;
 	bool hasStorageAccess = System_GetPermissionStatus(SYSTEM_PERMISSION_STORAGE) == PERMISSION_STATUS_GRANTED;
@@ -756,7 +756,7 @@ void MainScreen::CreateViews() {
 		scrollRecentGames->Add(tabRecentGames);
 		gameBrowsers_.push_back(tabRecentGames);
 
-		leftColumn->AddTab(mm->T("Recent"), scrollRecentGames);
+		tabHolder_->AddTab(mm->T("Recent"), scrollRecentGames);
 		tabRecentGames->OnChoice.Handle(this, &MainScreen::OnGameSelectedInstant);
 		tabRecentGames->OnHoldChoice.Handle(this, &MainScreen::OnGameSelected);
 		tabRecentGames->OnHighlight.Handle(this, &MainScreen::OnGameHighlight);
@@ -786,8 +786,8 @@ void MainScreen::CreateViews() {
 		scrollHomebrew->Add(tabHomebrew);
 		gameBrowsers_.push_back(tabHomebrew);
 
-		leftColumn->AddTab(mm->T("Games"), scrollAllGames);
-		leftColumn->AddTab(mm->T("Homebrew & Demos"), scrollHomebrew);
+		tabHolder_->AddTab(mm->T("Games"), scrollAllGames);
+		tabHolder_->AddTab(mm->T("Homebrew & Demos"), scrollHomebrew);
 
 		tabAllGames->OnChoice.Handle(this, &MainScreen::OnGameSelectedInstant);
 		tabHomebrew->OnChoice.Handle(this, &MainScreen::OnGameSelectedInstant);
@@ -799,35 +799,35 @@ void MainScreen::CreateViews() {
 		tabHomebrew->OnHighlight.Handle(this, &MainScreen::OnGameHighlight);
 
 		if (g_Config.recentIsos.size() > 0) {
-			leftColumn->SetCurrentTab(0);
+			tabHolder_->SetCurrentTab(0, true);
 		} else if (g_Config.iMaxRecent > 0) {
-			leftColumn->SetCurrentTab(1);
+			tabHolder_->SetCurrentTab(1, true);
 		}
 
 		if (backFromStore_ || showHomebrewTab) {
-			leftColumn->SetCurrentTab(2);
+			tabHolder_->SetCurrentTab(2, true);
 			backFromStore_ = false;
 			showHomebrewTab = false;
 		}
 	} else {
+		if (!showRecent) {
+			leftColumn = new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, 1.0f));
+			// Just so it's destroyed on recreate.
+			leftColumn->Add(tabHolder_);
+			tabHolder_->SetVisibility(V_GONE);
+		}
+
 		LinearLayout *buttonHolder = new LinearLayout(ORIENT_HORIZONTAL, new LinearLayoutParams(WRAP_CONTENT, WRAP_CONTENT));
 		buttonHolder->Add(new Spacer(new LinearLayoutParams(1.0f)));
 		buttonHolder->Add(new Button(mm->T("Give PPSSPP permission to access storage"), new LinearLayoutParams(WRAP_CONTENT, WRAP_CONTENT)))->OnClick.Handle(this, &MainScreen::OnAllowStorage);
 		buttonHolder->Add(new Spacer(new LinearLayoutParams(1.0f)));
 
-		leftColumn->Add(new Spacer(new LinearLayoutParams(1.0f)));
+		leftColumn->Add(new Spacer(new LinearLayoutParams(0.1f)));
 		leftColumn->Add(buttonHolder);
 		leftColumn->Add(new Spacer(10.0f));
 		leftColumn->Add(new TextView(mm->T("PPSSPP can't load games or save right now"), ALIGN_HCENTER, false));
-		leftColumn->Add(new Spacer(new LinearLayoutParams(1.0f)));
+		leftColumn->Add(new Spacer(new LinearLayoutParams(0.1f)));
 	}
-
-/* if (info) {
-		texvGameIcon_ = leftColumn->Add(new TextureView(0, IS_DEFAULT, new AnchorLayoutParams(144 * 2, 80 * 2, 10, 10, NONE, NONE)));
-		tvTitle_ = leftColumn->Add(new TextView(0, info->title, ALIGN_LEFT, 1.0f, new AnchorLayoutParams(10, 200, NONE, NONE)));
-		tvGameSize_ = leftColumn->Add(new TextView(0, "...", ALIGN_LEFT, 1.0f, new AnchorLayoutParams(10, 250, NONE, NONE)));
-		tvSaveDataSize_ = leftColumn->Add(new TextView(0, "...", ALIGN_LEFT, 1.0f, new AnchorLayoutParams(10, 290, NONE, NONE)));
-	} */
 
 	ViewGroup *rightColumn = new ScrollView(ORIENT_VERTICAL);
 	LinearLayout *rightColumnItems = new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
@@ -869,12 +869,10 @@ void MainScreen::CreateViews() {
 	if (vertical) {
 		root_ = new LinearLayout(ORIENT_VERTICAL);
 		rightColumn->ReplaceLayoutParams(new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, 0.75));
-		leftColumn->ReplaceLayoutParams(new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, 1.0));
 		root_->Add(rightColumn);
 		root_->Add(leftColumn);
 	} else {
 		root_ = new LinearLayout(ORIENT_HORIZONTAL);
-		leftColumn->ReplaceLayoutParams(new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, 1.0));
 		rightColumn->ReplaceLayoutParams(new LinearLayoutParams(300, FILL_PARENT, actionMenuMargins));
 		root_->Add(leftColumn);
 		root_->Add(rightColumn);
@@ -920,7 +918,7 @@ UI::EventReturn MainScreen::OnDownloadUpgrade(UI::EventParams &e) {
 	}
 #else
 	// Go directly to ppsspp.org and let the user sort it out
-	LaunchBrowser("http://www.ppsspp.org/downloads.html");
+	LaunchBrowser("https://www.ppsspp.org/downloads.html");
 #endif
 	return UI::EVENT_DONE;
 }
@@ -935,20 +933,8 @@ void MainScreen::sendMessage(const char *message, const char *value) {
 	// Always call the base class method first to handle the most common messages.
 	UIScreenWithBackground::sendMessage(message, value);
 
-	if (!strcmp(message, "boot")) {
+	if (!strcmp(message, "boot") && screenManager()->topScreen() == this) {
 		screenManager()->switchScreen(new EmuScreen(value));
-	}
-	if (!strcmp(message, "control mapping")) {
-		UpdateUIState(UISTATE_MENU);
-		screenManager()->push(new ControlMappingScreen());
-	}
-	if (!strcmp(message, "display layout editor")) {
-		UpdateUIState(UISTATE_MENU);
-		screenManager()->push(new DisplayLayoutScreen());
-	}
-	if (!strcmp(message, "settings")) {
-		UpdateUIState(UISTATE_MENU);
-		screenManager()->push(new GameSettingsScreen(""));
 	}
 	if (!strcmp(message, "permission_granted") && !strcmp(value, "storage")) {
 		RecreateViews();
@@ -971,7 +957,7 @@ bool MainScreen::UseVerticalLayout() const {
 
 UI::EventReturn MainScreen::OnLoadFile(UI::EventParams &e) {
 #if defined(USING_QT_UI)
-	QString fileName = QFileDialog::getOpenFileName(NULL, "Load ROM", g_Config.currentDirectory.c_str(), "PSP ROMs (*.iso *.cso *.pbp *.elf *.zip)");
+	QString fileName = QFileDialog::getOpenFileName(NULL, "Load ROM", g_Config.currentDirectory.c_str(), "PSP ROMs (*.iso *.cso *.pbp *.elf *.zip *.ppdmp)");
 	if (QFile::exists(fileName)) {
 		QDir newPath;
 		g_Config.currentDirectory = newPath.filePath(fileName).toStdString();
@@ -1131,18 +1117,18 @@ UI::EventReturn MainScreen::OnSupport(UI::EventParams &e) {
 #ifdef __ANDROID__
 	LaunchBrowser("market://details?id=org.ppsspp.ppssppgold");
 #else
-	LaunchBrowser("http://central.ppsspp.org/buygold");
+	LaunchBrowser("https://central.ppsspp.org/buygold");
 #endif
 	return UI::EVENT_DONE;
 }
 
 UI::EventReturn MainScreen::OnPPSSPPOrg(UI::EventParams &e) {
-	LaunchBrowser("http://www.ppsspp.org");
+	LaunchBrowser("https://www.ppsspp.org");
 	return UI::EVENT_DONE;
 }
 
 UI::EventReturn MainScreen::OnForums(UI::EventParams &e) {
-	LaunchBrowser("http://forums.ppsspp.org");
+	LaunchBrowser("https://forums.ppsspp.org");
 	return UI::EVENT_DONE;
 }
 
@@ -1236,9 +1222,9 @@ void UmdReplaceScreen::CreateViews() {
 	rightColumnItems->Add(new Choice(mm->T("Game Settings")))->OnClick.Handle(this, &UmdReplaceScreen::OnGameSettings);
 
 	if (g_Config.recentIsos.size() > 0) {
-		leftColumn->SetCurrentTab(0);
+		leftColumn->SetCurrentTab(0, true);
 	} else if (g_Config.iMaxRecent > 0) {
-		leftColumn->SetCurrentTab(1);
+		leftColumn->SetCurrentTab(1, true);
 	}
 
 	root_ = new LinearLayout(ORIENT_HORIZONTAL);

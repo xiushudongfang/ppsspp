@@ -55,7 +55,8 @@ private:
 class UIDialogScreen : public UIScreen {
 public:
 	UIDialogScreen() : UIScreen(), finished_(false) {}
-	virtual bool key(const KeyInput &key) override;
+	bool key(const KeyInput &key) override;
+	void sendMessage(const char *msg, const char *value) override;
 
 private:
 	bool finished_;
@@ -71,6 +72,7 @@ public:
 	virtual bool isTransparent() const override { return true; }
 	virtual bool touch(const TouchInput &touch) override;
 	virtual bool key(const KeyInput &key) override;
+	virtual void resized() override;
 
 	virtual void TriggerFinish(DialogResult result) override;
 
@@ -264,7 +266,7 @@ private:
 	const char *category_;
 	ScreenManager *screenManager_;
 	std::string valueText_;
-	bool restoreFocus_;
+	bool restoreFocus_ = false;
 	std::set<int> hidden_;
 };
 

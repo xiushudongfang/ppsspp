@@ -31,14 +31,16 @@
 #include "net/url.h"
 
 #include "Common/CPUDetect.h"
-#include "Common/KeyMap.h"
 #include "Common/FileUtil.h"
-#include "Common/StringUtils.h"
+#include "Common/KeyMap.h"
 #include "Common/LogManager.h"
+#include "Common/OSVersion.h"
+#include "Common/StringUtils.h"
+#include "Common/Vulkan/VulkanLoader.h"
 #include "Core/Config.h"
 #include "Core/Loaders.h"
+#include "Core/HLE/sceUtility.h"
 #include "GPU/Common/FramebufferCommon.h"
-#include "HLE/sceUtility.h"
 
 // TODO: Find a better place for this.
 http::Downloader g_DownloadManager;
@@ -360,6 +362,7 @@ static ConfigSetting generalSettings[] = {
 	ConfigSetting("UseFFV1", &g_Config.bUseFFV1, false),
 	ConfigSetting("DumpFrames", &g_Config.bDumpFrames, false),
 	ConfigSetting("DumpAudio", &g_Config.bDumpAudio, false),
+	ConfigSetting("SaveLoadResetsAVdumping", &g_Config.bSaveLoadResetsAVdumping, false),
 	ConfigSetting("StateSlot", &g_Config.iCurrentStateSlot, 0, true, true),
 	ConfigSetting("RewindFlipFrequency", &g_Config.iRewindFlipFrequency, 0, true, true),
 
@@ -376,6 +379,7 @@ static ConfigSetting generalSettings[] = {
 	ConfigSetting("LastRemoteISOServer", &g_Config.sLastRemoteISOServer, ""),
 	ConfigSetting("LastRemoteISOPort", &g_Config.iLastRemoteISOPort, 0),
 	ConfigSetting("RemoteISOManualConfig", &g_Config.bRemoteISOManual, false),
+	ConfigSetting("RemoteShareOnStartup", &g_Config.bRemoteShareOnStartup, false),
 	ConfigSetting("RemoteISOSubdir", &g_Config.sRemoteISOSubdir, "/"),
 
 #ifdef __ANDROID__
@@ -406,7 +410,6 @@ static bool DefaultSasThread() {
 
 static ConfigSetting cpuSettings[] = {
 	ReportedConfigSetting("CPUCore", &g_Config.iCpuCore, &DefaultCpuCore, true, true),
-	ReportedConfigSetting("SeparateCPUThread", &g_Config.bSeparateCPUThread, false, true, true),
 	ReportedConfigSetting("SeparateSASThread", &g_Config.bSeparateSASThread, &DefaultSasThread, true, true),
 	ReportedConfigSetting("SeparateIOThread", &g_Config.bSeparateIOThread, true, true, true),
 	ReportedConfigSetting("IOTimingMethod", &g_Config.iIOTimingMethod, IOTIMING_FAST, true, true),
@@ -433,7 +436,9 @@ static int DefaultInternalResolution() {
 	return 0;
 #else
 	int longestDisplaySide = std::max(System_GetPropertyInt(SYSPROP_DISPLAY_XRES), System_GetPropertyInt(SYSPROP_DISPLAY_YRES));
-	return longestDisplaySide >= 1000 ? 2 : 1;
+	int scale = longestDisplaySide >= 1000 ? 2 : 1;
+	ILOG("Longest display side: %d pixels. Choosing scale %d", longestDisplaySide, scale);
+	return scale;
 #endif
 }
 
@@ -475,13 +480,33 @@ static int DefaultAndroidHwScale() {
 #endif
 }
 
+static int DefaultGPUBackend() {
+#if PPSSPP_PLATFORM(WINDOWS) || PPSSPP_PLATFORM(ANDROID)
+	// Where supported, let's use Vulkan.
+	if (VulkanMayBeAvailable()) {
+		return (int)GPUBackend::VULKAN;
+	}
+#endif
+#if PPSSPP_PLATFORM(WINDOWS)
+	// If no Vulkan, use Direct3D 11 on Windows 8+ (most importantly 10.)
+	if (DoesVersionMatchWindows(6, 2, 0, 0, true)) {
+		return (int)GPUBackend::DIRECT3D11;
+	}
+#endif
+	return (int)GPUBackend::OPENGL;
+}
+
+static bool DefaultVertexCache() {
+	return DefaultGPUBackend() == (int)GPUBackend::OPENGL;
+}
+
 static ConfigSetting graphicsSettings[] = {
 	ConfigSetting("EnableCardboard", &g_Config.bEnableCardboard, false, true, true),
 	ConfigSetting("CardboardScreenSize", &g_Config.iCardboardScreenSize, 50, true, true),
 	ConfigSetting("CardboardXShift", &g_Config.iCardboardXShift, 0, true, true),
 	ConfigSetting("CardboardYShift", &g_Config.iCardboardXShift, 0, true, true),
 	ConfigSetting("ShowFPSCounter", &g_Config.iShowFPSCounter, 0, true, true),
-	ReportedConfigSetting("GPUBackend", &g_Config.iGPUBackend, 0),
+	ReportedConfigSetting("GraphicsBackend", &g_Config.iGPUBackend, &DefaultGPUBackend),
 	ReportedConfigSetting("RenderingMode", &g_Config.iRenderingMode, &DefaultRenderingMode, true, true),
 	ConfigSetting("SoftwareRenderer", &g_Config.bSoftwareRendering, false, true, true),
 	ReportedConfigSetting("HardwareTransform", &g_Config.bHardwareTransform, true, true, true),
@@ -500,13 +525,10 @@ static ConfigSetting graphicsSettings[] = {
 #endif
 	ReportedConfigSetting("ForceMaxEmulatedFPS", &g_Config.iForceMaxEmulatedFPS, 60, true, true),
 
-	// TODO: Hm, on fast mobile GPUs we should definitely default to at least 4 (setting = 2)...
-#ifdef MOBILE_DEVICE
-	ConfigSetting("AnisotropyLevel", &g_Config.iAnisotropyLevel, 0, true, true),
-#else
+	// Most low-performance (and many high performance) mobile GPUs do not support aniso anyway so defaulting to 4 is fine.
 	ConfigSetting("AnisotropyLevel", &g_Config.iAnisotropyLevel, 4, true, true),
-#endif
-	ReportedConfigSetting("VertexCache", &g_Config.bVertexCache, true, true, true),
+
+	ReportedConfigSetting("VertexDecCache", &g_Config.bVertexCache, &DefaultVertexCache, true, true),
 	ReportedConfigSetting("TextureBackoffCache", &g_Config.bTextureBackoffCache, false, true, true),
 	ReportedConfigSetting("TextureSecondaryCache", &g_Config.bTextureSecondaryCache, false, true, true),
 	ReportedConfigSetting("VertexDecJit", &g_Config.bVertexDecoderJit, &DefaultCodeGen, false),
@@ -545,6 +567,7 @@ static ConfigSetting graphicsSettings[] = {
 	ReportedConfigSetting("FragmentTestCache", &g_Config.bFragmentTestCache, true, true, true),
 
 	ConfigSetting("GfxDebugOutput", &g_Config.bGfxDebugOutput, false, false, false),
+	ConfigSetting("GfxDebugSplitSubmit", &g_Config.bGfxDebugSplitSubmit, false, false, false),
 	ConfigSetting("LogFrameDrops", &g_Config.bLogFrameDrops, false, true, false),
 
 	ConfigSetting(false),
@@ -784,6 +807,7 @@ static ConfigSetting systemParamSettings[] = {
 #endif
 	ConfigSetting("WlanPowerSave", &g_Config.bWlanPowerSave, (bool) PSP_SYSTEMPARAM_WLAN_POWERSAVE_OFF, true, true),
 	ReportedConfigSetting("EncryptSave", &g_Config.bEncryptSave, true, true, true),
+	ConfigSetting("SavedataUpgrade", &g_Config.bSavedataUpgrade, false, true, false),
 
 	ConfigSetting(false),
 };
@@ -986,6 +1010,9 @@ void Config::Load(const char *iniFileName, const char *controllerIniFilename) {
 	if (iAnisotropyLevel > 4) {
 		iAnisotropyLevel = 4;
 	}
+	if (iRenderingMode != FB_NON_BUFFERED_MODE && iRenderingMode != FB_BUFFERED_MODE) {
+		g_Config.iRenderingMode = FB_BUFFERED_MODE;
+	}
 
 	// Check for an old dpad setting
 	IniFile::Section *control = iniFile.GetOrCreateSection("Control");
@@ -1143,6 +1170,7 @@ void Config::Save() {
 
 		if (!iniFile.Save(iniFilename_.c_str())) {
 			ERROR_LOG(LOADER, "Error saving config - can't write ini %s", iniFilename_.c_str());
+			System_SendMessage("toast", "Failed to save settings!\nCheck permissions, or try to restart the device.");
 			return;
 		}
 		INFO_LOG(LOADER, "Config saved: %s", iniFilename_.c_str());

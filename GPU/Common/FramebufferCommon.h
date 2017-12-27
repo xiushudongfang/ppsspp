@@ -25,6 +25,7 @@
 #include "Core/MemMap.h"
 #include "GPU/GPU.h"
 #include "GPU/ge_constants.h"
+#include "GPU/GPUInterface.h"
 #include "thin3d/thin3d.h"
 
 enum {
@@ -39,15 +40,6 @@ enum {
 enum {
 	FB_NON_BUFFERED_MODE = 0,
 	FB_BUFFERED_MODE = 1,
-
-	// Hm, it's unfortunate that GPU has ended up as two separate values in GL and GLES.
-#ifndef USING_GLES2
-	FB_READFBOMEMORY_CPU = 2,
-	FB_READFBOMEMORY_GPU = 3,
-#else
-	FB_READFBOMEMORY_GPU = 2,
-#endif
-	FBO_READFBOMEMORY_MIN = 2
 };
 
 namespace Draw {
@@ -68,6 +60,7 @@ class VulkanFBO;
 struct PostShaderUniforms {
 	float texelDelta[2]; float pixelDelta[2];
 	float time[4];
+	float video;
 };
 
 struct VirtualFramebuffer {
@@ -77,9 +70,10 @@ struct VirtualFramebuffer {
 	int last_frame_displayed;
 	int last_frame_clut;
 	int last_frame_failed;
+	int last_frame_depth_updated;
+	int last_frame_depth_render;
 	u32 clutUpdatedBytes;
 	bool memoryUpdated;
-	bool depthUpdated;
 	bool firstFrameSaved;
 
 	u32 fb_address;
@@ -158,6 +152,21 @@ enum DrawTextureFlags {
 	DRAWTEX_KEEP_TEX = 2,
 };
 
+inline Draw::DataFormat GEFormatToThin3D(int geFormat) {
+	switch (geFormat) {
+	case GE_FORMAT_4444:
+		return Draw::DataFormat::A4R4G4B4_UNORM_PACK16;
+	case GE_FORMAT_5551:
+		return Draw::DataFormat::A1R5G5B5_UNORM_PACK16;
+	case GE_FORMAT_565:
+		return Draw::DataFormat::R5G6B5_UNORM_PACK16;
+	case GE_FORMAT_8888:
+		return Draw::DataFormat::R8G8B8A8_UNORM;
+	default:
+		return Draw::DataFormat::UNDEFINED;
+	}
+}
+
 namespace Draw {
 class DrawContext;
 }
@@ -165,6 +174,7 @@ class DrawContext;
 struct GPUDebugBuffer;
 class TextureCacheCommon;
 class ShaderManagerCommon;
+class DrawEngineCommon;
 
 class FramebufferManagerCommon {
 public:
@@ -172,7 +182,7 @@ public:
 	virtual ~FramebufferManagerCommon();
 
 	virtual void Init();
-	void BeginFrame();
+	virtual void BeginFrame();
 	void SetDisplayFramebuffer(u32 framebuf, u32 stride, GEBufferFormat format);
 	void DestroyFramebuf(VirtualFramebuffer *v);
 
@@ -191,10 +201,13 @@ public:
 			FramebufferHeuristicParams inputs;
 			GetFramebufferHeuristicInputs(&inputs, gstate);
 			VirtualFramebuffer *vfb = DoSetRenderFrameBuffer(inputs, skipDrawReason);
+			_dbg_assert_msg_(G3D, vfb, "DoSetRenderFramebuffer must return a valid framebuffer.");
+			_dbg_assert_msg_(G3D, currentRenderVfb_, "DoSetRenderFramebuffer must set a valid framebuffer.");
 			return vfb;
 		}
 	}
-	virtual void RebindFramebuffer() = 0;
+	virtual void RebindFramebuffer();
+	std::vector<FramebufferInfo> GetFramebufferList();
 
 	void CopyDisplayToOutput();
 
@@ -209,8 +222,9 @@ public:
 	bool NotifyBlockTransferBefore(u32 dstBasePtr, int dstStride, int dstX, int dstY, u32 srcBasePtr, int srcStride, int srcX, int srcY, int w, int h, int bpp, u32 skipDrawReason);
 	void NotifyBlockTransferAfter(u32 dstBasePtr, int dstStride, int dstX, int dstY, u32 srcBasePtr, int srcStride, int srcX, int srcY, int w, int h, int bpp, u32 skipDrawReason);
 
-	virtual void ReadFramebufferToMemory(VirtualFramebuffer *vfb, bool sync, int x, int y, int w, int h) = 0;
-	virtual void DownloadFramebufferForClut(u32 fb_address, u32 loadBytes) = 0;
+	virtual void ReadFramebufferToMemory(VirtualFramebuffer *vfb, bool sync, int x, int y, int w, int h);
+
+	virtual void DownloadFramebufferForClut(u32 fb_address, u32 loadBytes);
 	void DrawFramebufferToOutput(const u8 *srcPixels, GEBufferFormat srcPixelFormat, int srcStride, bool applyPostShader);
 
 	void DrawPixels(VirtualFramebuffer *vfb, int dstX, int dstY, const u8 *srcPixels, GEBufferFormat srcPixelFormat, int srcStride, int width, int height);
@@ -261,7 +275,8 @@ public:
 
 	void SetDepthUpdated() {
 		if (currentRenderVfb_) {
-			currentRenderVfb_->depthUpdated = true;
+			currentRenderVfb_->last_frame_depth_render = gpuStats.numFlips;
+			currentRenderVfb_->last_frame_depth_updated = gpuStats.numFlips;
 		}
 	}
 	void SetColorUpdated(int skipDrawReason) {
@@ -277,12 +292,13 @@ public:
 	Draw::Framebuffer *GetTempFBO(u16 w, u16 h, Draw::FBColorDepth colorDepth = Draw::FBO_8888);
 
 	// Debug features
-	virtual bool GetFramebuffer(u32 fb_address, int fb_stride, GEBufferFormat format, GPUDebugBuffer &buffer, int maxRes) = 0;
-	virtual bool GetDepthbuffer(u32 fb_address, int fb_stride, u32 z_address, int z_stride, GPUDebugBuffer &buffer) = 0;
-	virtual bool GetStencilbuffer(u32 fb_address, int fb_stride, GPUDebugBuffer &buffer) = 0;
-	virtual bool GetOutputFramebuffer(GPUDebugBuffer &buffer) = 0;
+	virtual bool GetFramebuffer(u32 fb_address, int fb_stride, GEBufferFormat format, GPUDebugBuffer &buffer, int maxRes);
+	virtual bool GetDepthbuffer(u32 fb_address, int fb_stride, u32 z_address, int z_stride, GPUDebugBuffer &buffer);
+	virtual bool GetStencilbuffer(u32 fb_address, int fb_stride, GPUDebugBuffer &buffer);
+	virtual bool GetOutputFramebuffer(GPUDebugBuffer &buffer);
 
 protected:
+	virtual void PackFramebufferSync_(VirtualFramebuffer *vfb, int x, int y, int w, int h);
 	virtual void SetViewport2D(int x, int y, int w, int h);
 	void CalculatePostShaderUniforms(int bufferWidth, int bufferHeight, int renderWidth, int renderHeight, PostShaderUniforms *uniforms);
 	virtual void MakePixelTexture(const u8 *srcPixels, GEBufferFormat srcPixelFormat, int srcStride, int width, int height, float &u1, float &v1) = 0;
@@ -297,7 +313,7 @@ protected:
 	void SetNumExtraFBOs(int num);
 
 	virtual void DisableState() = 0;
-	virtual void FlushBeforeCopy() = 0;
+	void FlushBeforeCopy();
 	virtual void DecimateFBOs();  // keeping it virtual to let D3D do a little extra
 
 	// Used by ReadFramebufferToMemory and later framebuffer block copies
@@ -315,7 +331,7 @@ protected:
 	virtual void ReformatFramebufferFrom(VirtualFramebuffer *vfb, GEBufferFormat old) = 0;
 	virtual void BlitFramebufferDepth(VirtualFramebuffer *src, VirtualFramebuffer *dst) = 0;
 
-	void ResizeFramebufFBO(VirtualFramebuffer *vfb, u16 w, u16 h, bool force = false, bool skipCopy = false);
+	void ResizeFramebufFBO(VirtualFramebuffer *vfb, int w, int h, bool force = false, bool skipCopy = false);
 	void ShowScreenResolution();
 
 	bool ShouldDownloadFramebuffer(const VirtualFramebuffer *vfb) const;
@@ -342,6 +358,7 @@ protected:
 	Draw::DrawContext *draw_ = nullptr;
 	TextureCacheCommon *textureCache_ = nullptr;
 	ShaderManagerCommon *shaderManager_ = nullptr;
+	DrawEngineCommon *drawEngine_ = nullptr;
 	bool needBackBufferYSwap_ = false;
 
 	u32 displayFramebufPtr_ = 0;
@@ -359,7 +376,6 @@ protected:
 	u32 framebufRangeEnd_ = 0;
 
 	bool useBufferedRendering_ = false;
-	bool updateVRAM_ = false;
 	bool usePostShader_ = false;
 	bool postShaderAtOutputResolution_ = false;
 	bool postShaderIsUpscalingFilter_ = false;
@@ -389,6 +405,8 @@ protected:
 	};
 
 	std::map<u64, TempFBO> tempFBOs_;
+
+	std::vector<Draw::Framebuffer *> fbosToDelete_;
 
 	// Aggressively delete unused FBOs to save gpu memory.
 	enum {

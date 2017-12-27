@@ -28,7 +28,6 @@
 #include "GPU/Common/GPUStateUtils.h"
 #include "GPU/GLES/FragmentShaderGeneratorGLES.h"
 #include "gfx/gl_common.h"
-#include "gfx/gl_lost_manager.h"
 
 class LinkedShader;
 class ShaderManagerGLES;
@@ -100,7 +99,7 @@ public:
 };
 
 // Handles transform, lighting and drawing.
-class DrawEngineGLES : public DrawEngineCommon, public GfxResourceHolder {
+class DrawEngineGLES : public DrawEngineCommon {
 public:
 	DrawEngineGLES();
 	virtual ~DrawEngineGLES();
@@ -120,10 +119,9 @@ public:
 		fragmentTestCache_ = testCache;
 	}
 	void RestoreVAO();
-	void InitDeviceObjects();
-	void DestroyDeviceObjects();
-	void GLLost() override;
-	void GLRestore() override;
+
+	void DeviceLost();
+	void DeviceRestore();
 
 	void ClearTrackedVertexArrays() override;
 	void DecimateTrackedVertexArrays();
@@ -138,7 +136,7 @@ public:
 	void FinishDeferred() {
 		if (!numDrawCalls)
 			return;
-		DecodeVerts();
+		DecodeVerts(decoded);
 	}
 
 	bool IsCodePtrVertexDecoder(const u8 *ptr) const;
@@ -154,7 +152,9 @@ public:
 	void DecimateBuffers();
 
 private:
-	void DecodeVerts();
+	void InitDeviceObjects();
+	void DestroyDeviceObjects();
+
 	void DoFlush();
 	void ApplyDrawState(int prim);
 	void ApplyDrawStateLate();

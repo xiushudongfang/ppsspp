@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "Common/Swap.h"
 #include "GPU/GPU.h"
 #include "Core/MemMap.h"
 #include "GPU/ge_constants.h"
@@ -154,56 +155,6 @@ enum GPUInvalidationType {
 	GPU_INVALIDATE_SAFE,
 };
 
-enum GPUEventType {
-	GPU_EVENT_INVALID,
-	GPU_EVENT_PROCESS_QUEUE,
-	GPU_EVENT_INIT_CLEAR,
-	GPU_EVENT_BEGIN_FRAME,
-	GPU_EVENT_COPY_DISPLAY_TO_OUTPUT,
-	GPU_EVENT_REAPPLY_GFX_STATE,
-	GPU_EVENT_INVALIDATE_CACHE,
-	GPU_EVENT_FINISH_EVENT_LOOP,
-	GPU_EVENT_SYNC_THREAD,
-	GPU_EVENT_FB_MEMCPY,
-	GPU_EVENT_FB_MEMSET,
-	GPU_EVENT_FB_STENCIL_UPLOAD,
-	GPU_EVENT_REINITIALIZE,
-};
-
-struct GPUEvent {
-	GPUEvent(GPUEventType t) : type(t) {}
-	GPUEventType type;
-	union {
-		// GPU_EVENT_INVALIDATE_CACHE
-		struct {
-			u32 addr;
-			int size;
-			GPUInvalidationType type;
-		} invalidate_cache;
-		// GPU_EVENT_FB_MEMCPY
-		struct {
-			u32 dst;
-			u32 src;
-			int size;
-		} fb_memcpy;
-		// GPU_EVENT_FB_MEMSET
-		struct {
-			u32 dst;
-			u8 v;
-			int size;
-		} fb_memset;
-		// GPU_EVENT_FB_STENCIL_UPLOAD
-		struct {
-			u32 dst;
-			int size;
-		} fb_stencil_upload;
-	};
-
-	operator GPUEventType() const {
-		return type;
-	}
-};
-
 namespace Draw {
 class DrawContext;
 }
@@ -217,16 +168,13 @@ public:
 	virtual Draw::DrawContext *GetDrawContext() = 0;
 
 	// Initialization
+	virtual bool IsReady() = 0;
 	virtual void InitClear() = 0;
 	virtual void Reinitialize() = 0;
 
 	// Frame managment
 	virtual void BeginHostFrame() = 0;
 	virtual void EndHostFrame() = 0;
-
-	// Events
-	virtual void RunEventsUntil(u64 globalticks) = 0;
-	virtual void FinishEventLoop() = 0;
 
 	// Draw queue management
 	virtual DisplayList* getList(int listid) = 0;
@@ -276,9 +224,6 @@ public:
 	virtual void DeviceLost() = 0;
 	virtual void DeviceRestore() = 0;
 	virtual void ReapplyGfxState() = 0;
-	virtual void SyncThread(bool force = false) = 0;
-	virtual void SyncBeginFrame() = 0;
-	virtual u64  GetTickEstimate() = 0;
 	virtual void DoState(PointerWrap &p) = 0;
 
 	// Called by the window system if the window size changed. This will be reflected in PSPCoreParam.pixel*.
@@ -288,7 +233,6 @@ public:
 	virtual bool FramebufferDirty() = 0;
 	virtual bool FramebufferReallyDirty() = 0;
 	virtual bool BusyDrawing() = 0;
-	virtual void SetThreadEnabled(bool threadEnabled) = 0;
 
 	// If any jit is being used inside the GPU.
 	virtual bool DescribeCodePtr(const u8 *ptr, std::string &name) = 0;

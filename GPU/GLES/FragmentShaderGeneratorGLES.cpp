@@ -36,9 +36,10 @@
 // #define DEBUG_SHADER
 
 // Missing: Z depth range
-bool GenerateFragmentShader(const ShaderID &id, char *buffer) {
+bool GenerateFragmentShader(const FShaderID &id, char *buffer, uint64_t *uniformMask) {
 	char *p = buffer;
 
+	*uniformMask = 0;
 	// In GLSL ES 3.0, you use "in" variables instead of varying.
 
 	bool glslES30 = false;
@@ -56,7 +57,7 @@ bool GenerateFragmentShader(const ShaderID &id, char *buffer) {
 
 	if (gl_extensions.IsGLES) {
 		// ES doesn't support dual source alpha :(
-		if (gstate_c.featureFlags & GPU_SUPPORTS_GLSL_ES_300) {
+		if (gstate_c.Supports(GPU_SUPPORTS_GLSL_ES_300)) {
 			WRITE(p, "#version 300 es\n");  // GLSL ES 3.0
 			fragColor0 = "fragColor0";
 			texture = "texture";
@@ -89,8 +90,8 @@ bool GenerateFragmentShader(const ShaderID &id, char *buffer) {
 		highpFog = (gl_extensions.bugs & BUG_PVR_SHADER_PRECISION_BAD) ? true : false;
 		highpTexcoord = highpFog;
 
-		if (gstate_c.featureFlags & GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH) {
-			if ((gstate_c.featureFlags & GPU_SUPPORTS_GLSL_ES_300) != 0 && gl_extensions.EXT_shader_framebuffer_fetch) {
+		if (gstate_c.Supports(GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH)) {
+			if (gstate_c.Supports(GPU_SUPPORTS_GLSL_ES_300) && gl_extensions.EXT_shader_framebuffer_fetch) {
 				WRITE(p, "#extension GL_EXT_shader_framebuffer_fetch : require\n");
 				lastFragData = "fragColor0";
 			} else if (gl_extensions.EXT_shader_framebuffer_fetch) {
@@ -180,6 +181,7 @@ bool GenerateFragmentShader(const ShaderID &id, char *buffer) {
 		WRITE(p, "uniform sampler2D tex;\n");
 
 	if (!isModeClear && replaceBlend > REPLACE_BLEND_STANDARD) {
+		*uniformMask |= DIRTY_SHADERBLEND;
 		if (!gstate_c.Supports(GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH) && replaceBlend == REPLACE_BLEND_COPY_FBO) {
 			if (!texelFetch) {
 				WRITE(p, "uniform vec2 u_fbotexSize;\n");
@@ -195,6 +197,7 @@ bool GenerateFragmentShader(const ShaderID &id, char *buffer) {
 	}
 
 	if (needShaderTexClamp && doTexture) {
+		*uniformMask |= DIRTY_TEXCLAMP;
 		WRITE(p, "uniform vec4 u_texclamp;\n");
 		if (id.Bit(FS_BIT_TEXTURE_AT_OFFSET)) {
 			WRITE(p, "uniform vec2 u_texclampoff;\n");
@@ -205,8 +208,10 @@ bool GenerateFragmentShader(const ShaderID &id, char *buffer) {
 		if (g_Config.bFragmentTestCache) {
 			WRITE(p, "uniform sampler2D testtex;\n");
 		} else {
+			*uniformMask |= DIRTY_ALPHACOLORREF;
 			WRITE(p, "uniform vec4 u_alphacolorref;\n");
 			if (bitwiseOps && ((enableColorTest && !colorTestAgainstZero) || (enableAlphaTest && !alphaTestAgainstZero))) {
+				*uniformMask |= DIRTY_ALPHACOLORMASK;
 				WRITE(p, "uniform ivec4 u_alphacolormask;\n");
 			}
 		}
@@ -214,15 +219,19 @@ bool GenerateFragmentShader(const ShaderID &id, char *buffer) {
 
 	StencilValueType replaceAlphaWithStencilType = (StencilValueType)id.Bits(FS_BIT_REPLACE_ALPHA_WITH_STENCIL_TYPE, 4);
 	if (stencilToAlpha && replaceAlphaWithStencilType == STENCIL_VALUE_UNIFORM) {
+		*uniformMask |= DIRTY_STENCILREPLACEVALUE;
 		WRITE(p, "uniform float u_stencilReplaceValue;\n");
 	}
-	if (doTexture && texFunc == GE_TEXFUNC_BLEND)
+	if (doTexture && texFunc == GE_TEXFUNC_BLEND) {
+		*uniformMask |= DIRTY_TEXENV;
 		WRITE(p, "uniform vec3 u_texenv;\n");
+	}
 
 	WRITE(p, "%s %s vec4 v_color0;\n", shading, varying);
 	if (lmode)
 		WRITE(p, "%s %s vec3 v_color1;\n", shading, varying);
 	if (enableFog) {
+		*uniformMask |= DIRTY_FOGCOLOR;
 		WRITE(p, "uniform vec3 u_fogcolor;\n");
 		WRITE(p, "%s %s float v_fogdepth;\n", varying, highpFog ? "highp" : "mediump");
 	}
@@ -234,7 +243,7 @@ bool GenerateFragmentShader(const ShaderID &id, char *buffer) {
 		if (enableAlphaTest && !alphaTestAgainstZero) {
 			if (bitwiseOps) {
 				WRITE(p, "int roundAndScaleTo255i(in float x) { return int(floor(x * 255.0 + 0.5)); }\n");
-			} else if (gl_extensions.gpuVendor == GPU_VENDOR_POWERVR) {
+			} else if (gl_extensions.gpuVendor == GPU_VENDOR_IMGTEC) {
 				WRITE(p, "float roundTo255thf(in mediump float x) { mediump float y = x + (0.5/255.0); return y - fract(y * 255.0) * (1.0 / 255.0); }\n");
 			} else {
 				WRITE(p, "float roundAndScaleTo255f(in float x) { return floor(x * 255.0 + 0.5); }\n");
@@ -243,7 +252,7 @@ bool GenerateFragmentShader(const ShaderID &id, char *buffer) {
 		if (enableColorTest && !colorTestAgainstZero) {
 			if (bitwiseOps) {
 				WRITE(p, "ivec3 roundAndScaleTo255iv(in vec3 x) { return ivec3(floor(x * 255.0 + 0.5)); }\n");
-			} else if (gl_extensions.gpuVendor == GPU_VENDOR_POWERVR) {
+			} else if (gl_extensions.gpuVendor == GPU_VENDOR_IMGTEC) {
 				WRITE(p, "vec3 roundTo255thv(in vec3 x) { vec3 y = x + (0.5/255.0); return y - fract(y * 255.0) * (1.0 / 255.0); }\n");
 			} else {
 				WRITE(p, "vec3 roundAndScaleTo255v(in vec3 x) { return floor(x * 255.0 + 0.5); }\n");
@@ -427,7 +436,7 @@ bool GenerateFragmentShader(const ShaderID &id, char *buffer) {
 				if (alphaTestFuncs[alphaTestFunc][0] != '#') {
 					if (bitwiseOps) {
 						WRITE(p, "  if ((roundAndScaleTo255i(v.a) & u_alphacolormask.a) %s int(u_alphacolorref.a)) discard;\n", alphaTestFuncs[alphaTestFunc]);
-					} else if (gl_extensions.gpuVendor == GPU_VENDOR_POWERVR) {
+					} else if (gl_extensions.gpuVendor == GPU_VENDOR_IMGTEC) {
 						// Work around bad PVR driver problem where equality check + discard just doesn't work.
 						if (alphaTestFunc != GE_COMP_NOTEQUAL) {
 							WRITE(p, "  if (roundTo255thf(v.a) %s u_alphacolorref.a) discard;\n", alphaTestFuncs[alphaTestFunc]);
@@ -476,7 +485,7 @@ bool GenerateFragmentShader(const ShaderID &id, char *buffer) {
 						const char *maskedFragColor = "ivec3(v_scaled.r & u_alphacolormask.r, v_scaled.g & u_alphacolormask.g, v_scaled.b & u_alphacolormask.b)";
 						const char *maskedColorRef = "ivec3(int(u_alphacolorref.r) & u_alphacolormask.r, int(u_alphacolorref.g) & u_alphacolormask.g, int(u_alphacolorref.b) & u_alphacolormask.b)";
 						WRITE(p, "  if (%s %s %s) discard;\n", maskedFragColor, colorTestFuncs[colorTestFunc], maskedColorRef);
-					} else if (gl_extensions.gpuVendor == GPU_VENDOR_POWERVR) {
+					} else if (gl_extensions.gpuVendor == GPU_VENDOR_IMGTEC) {
 						WRITE(p, "  if (roundTo255thv(v.rgb) %s u_alphacolorref.rgb) discard;\n", colorTestFuncs[colorTestFunc]);
 					} else {
 						WRITE(p, "  if (roundAndScaleTo255v(v.rgb) %s u_alphacolorref.rgb) discard;\n", colorTestFuncs[colorTestFunc]);
@@ -525,7 +534,7 @@ bool GenerateFragmentShader(const ShaderID &id, char *buffer) {
 		if (replaceBlend == REPLACE_BLEND_COPY_FBO) {
 			// If we have NV_shader_framebuffer_fetch / EXT_shader_framebuffer_fetch, we skip the blit.
 			// We can just read the prev value more directly.
-			if (gstate_c.featureFlags & GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH) {
+			if (gstate_c.Supports(GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH)) {
 				WRITE(p, "  lowp vec4 destColor = %s;\n", lastFragData);
 			} else if (!texelFetch) {
 				WRITE(p, "  lowp vec4 destColor = %s(fbotex, gl_FragCoord.xy * u_fbotexSize.xy);\n", texture);

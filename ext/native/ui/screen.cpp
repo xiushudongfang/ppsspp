@@ -152,22 +152,6 @@ void ScreenManager::sendMessage(const char *msg, const char *value) {
 		stack_.back().screen->sendMessage(msg, value);
 }
 
-void ScreenManager::deviceLost() {
-	for (size_t i = 0; i < stack_.size(); i++) {
-		stack_[i].screen->deviceLost();
-	}
-	// Dialogs too? Nah, they should only use the standard UI texture anyway.
-	// TODO: Change this when it becomes necessary.
-}
-
-void ScreenManager::deviceRestore() {
-	for (size_t i = 0; i < stack_.size(); i++) {
-		stack_[i].screen->deviceRestore();
-	}
-	// Dialogs too? Nah, they should only use the standard UI texture anyway.
-	// TODO: Change this when it becomes necessary.
-}
-
 Screen *ScreenManager::topScreen() const {
 	if (!stack_.empty())
 		return stack_.back().screen;
@@ -181,7 +165,7 @@ void ScreenManager::shutdown() {
 		delete x->screen;
 	stack_.clear();
 	delete nextScreen_;
-	nextScreen_ = 0;
+	nextScreen_ = nullptr;
 }
 
 void ScreenManager::push(Screen *screen, int layerFlags) {
@@ -229,20 +213,25 @@ void ScreenManager::finishDialog(Screen *dialog, DialogResult result) {
 	dialogResult_ = result;
 }
 
+Screen *ScreenManager::dialogParent(const Screen *dialog) const {
+	for (size_t i = 1; i < stack_.size(); ++i) {
+		if (stack_[i].screen == dialog) {
+			// The previous screen was the caller (not necessarily the topmost.)
+			return stack_[i - 1].screen;
+		}
+	}
+
+	return nullptr;
+}
+
 void ScreenManager::processFinishDialog() {
 	if (dialogFinished_) {
 		std::lock_guard<std::recursive_mutex> guard(inputLock_);
 		// Another dialog may have been pushed before the render, so search for it.
-		Screen *caller = 0;
+		Screen *caller = dialogParent(dialogFinished_);
 		for (size_t i = 0; i < stack_.size(); ++i) {
-			if (stack_[i].screen != dialogFinished_) {
-				continue;
-			}
-
-			stack_.erase(stack_.begin() + i);
-			// The previous screen was the caller (not necessarily the topmost.)
-			if (i > 0) {
-				caller = stack_[i - 1].screen;
+			if (stack_[i].screen == dialogFinished_) {
+				stack_.erase(stack_.begin() + i);
 			}
 		}
 
@@ -255,6 +244,6 @@ void ScreenManager::processFinishDialog() {
 			caller->dialogFinished(dialogFinished_, dialogResult_);
 		}
 		delete dialogFinished_;
-		dialogFinished_ = 0;
+		dialogFinished_ = nullptr;
 	}
 }

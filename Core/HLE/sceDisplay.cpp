@@ -106,6 +106,7 @@ static int mode;
 static int width;
 static int height;
 static bool wasPaused;
+static bool flippedThisFrame;
 
 // 1.001f to compensate for the classic 59.94 NTSC framerate that the PSP seems to have.
 static const double timePerVblank = 1.001f / 60.0f;
@@ -157,9 +158,10 @@ static float flips = 0.0f;
 static int actualFlips = 0;  // taking frameskip into account
 static int lastActualFlips = 0;
 static float actualFps = 0;
-static u64 lastFlipCycles = 0;
 // For the "max 60 fps" setting.
 static int lastFlipsTooFrequent = 0;
+static u64 lastFlipCycles = 0;
+static u64 nextFlipCycles = 0;
 
 void hleEnterVblank(u64 userdata, int cyclesLate);
 void hleLeaveVblank(u64 userdata, int cyclesLate);
@@ -171,6 +173,8 @@ void __DisplayVblankEndCallback(SceUID threadID, SceUID prevCallbackId);
 int __DisplayGetFlipCount() { return actualFlips; }
 int __DisplayGetVCount() { return vCount; }
 int __DisplayGetNumVblanks() { return numVBlanks; }
+
+void __DisplayFlip(int cyclesLate);
 
 static void ScheduleLagSync(int over = 0) {
 	lagSyncScheduled = g_Config.bForceLagSync;
@@ -191,13 +195,15 @@ void __DisplayInit() {
 	numSkippedFrames = 0;
 	numVBlanks = 0;
 	numVBlanksSinceFlip = 0;
+	flippedThisFrame = false;
 	framebufIsLatched = false;
 	framebuf.topaddr = 0x04000000;
 	framebuf.fmt = GE_FORMAT_8888;
 	framebuf.stride = 512;
 	memcpy(&latchedFramebuf, &framebuf, sizeof(latchedFramebuf));
-	lastFlipCycles = 0;
 	lastFlipsTooFrequent = 0;
+	lastFlipCycles = 0;
+	nextFlipCycles = 0;
 	wasPaused = false;
 
 	enterVblankEvent = CoreTiming::RegisterEvent("EnterVBlank", &hleEnterVblank);
@@ -234,7 +240,7 @@ struct GPUStatistics_v0 {
 };
 
 void __DisplayDoState(PointerWrap &p) {
-	auto s = p.Section("sceDisplay", 1, 6);
+	auto s = p.Section("sceDisplay", 1, 7);
 	if (!s)
 		return;
 
@@ -300,11 +306,21 @@ void __DisplayDoState(PointerWrap &p) {
 		GPUStatistics_v0 oldStats;
 		p.Do(oldStats);
 	}
+
+	if (s < 7) {
+		u64 now = CoreTiming::GetTicks();
+		lastFlipCycles = now;
+		nextFlipCycles = now;
+	} else {
+		p.Do(lastFlipCycles);
+		p.Do(nextFlipCycles);
+	}
+
 	gpu->DoState(p);
 
-	gpu->ReapplyGfxState();
-
 	if (p.mode == p.MODE_READ) {
+		gpu->ReapplyGfxState();
+
 		if (hasSetMode) {
 			gpu->InitClear();
 		}
@@ -653,7 +669,15 @@ void hleEnterVblank(u64 userdata, int cyclesLate) {
 		framebuf = latchedFramebuf;
 		framebufIsLatched = false;
 		gpu->SetDisplayFramebuffer(framebuf.topaddr, framebuf.stride, framebuf.fmt);
+		__DisplayFlip(cyclesLate);
+	} else if (!flippedThisFrame) {
+		// Gotta flip even if sceDisplaySetFramebuf was not called.
+		__DisplayFlip(cyclesLate);
 	}
+}
+
+void __DisplayFlip(int cyclesLate) {
+	flippedThisFrame = true;
 	// We flip only if the framebuffer was dirty. This eliminates flicker when using
 	// non-buffered rendering. The interaction with frame skipping seems to need
 	// some work.
@@ -723,6 +747,7 @@ void hleEnterVblank(u64 userdata, int cyclesLate) {
 		// Returning here with coreState == CORE_NEXTFRAME causes a buffer flip to happen (next frame).
 		// Right after, we regain control for a little bit in hleAfterFlip. I think that's a great
 		// place to do housekeeping.
+
 		CoreTiming::ScheduleEvent(0 - cyclesLate, afterFlipEvent, 0);
 		numVBlanksSinceFlip = 0;
 	} else {
@@ -742,6 +767,7 @@ void hleAfterFlip(u64 userdata, int cyclesLate) {
 
 void hleLeaveVblank(u64 userdata, int cyclesLate) {
 	isVblank = 0;
+	flippedThisFrame = false;
 	VERBOSE_LOG(SCEDISPLAY,"Leave VBlank %i", (int)userdata - 1);
 	CoreTiming::ScheduleEvent(msToCycles(frameMs - vblankMs) - cyclesLate, enterVblankEvent, userdata);
 
@@ -833,9 +859,12 @@ void __DisplaySetFramebuf(u32 topaddr, int linesize, int pixelFormat, int sync) 
 	fbstate.stride = linesize;
 
 	if (sync == PSP_DISPLAY_SETBUF_IMMEDIATE) {
-		// Write immediately to the current framebuffer parameters
+		// Write immediately to the current framebuffer parameters.
 		framebuf = fbstate;
 		gpu->SetDisplayFramebuffer(framebuf.topaddr, framebuf.stride, framebuf.fmt);
+		// IMMEDIATE means that the buffer is fine. We can just flip immediately.
+		if (!flippedThisFrame)
+			__DisplayFlip(0);
 	} else {
 		// Delay the write until vblank
 		latchedFramebuf = fbstate;
@@ -876,27 +905,32 @@ u32 sceDisplaySetFramebuf(u32 topaddr, int linesize, int pixelformat, int sync) 
 	s64 delayCycles = 0;
 	// Don't count transitions between display off and display on.
 	if (topaddr != 0 && topaddr != framebuf.topaddr && framebuf.topaddr != 0 && g_Config.iForceMaxEmulatedFPS > 0) {
-		// Sometimes we get a small number, there's probably no need to delay the thread for this.
 		// sceDisplaySetFramebuf() isn't supposed to delay threads at all.  This is a hack.
-		const int FLIP_DELAY_CYCLES_MIN = 10;
+		// So let's only delay when it's more than 1ms.
+		const s64 FLIP_DELAY_CYCLES_MIN = usToCycles(1000);
 		// Some games (like Final Fantasy 4) only call this too much in spurts.
 		// The goal is to fix games where this would result in a consistent overhead.
 		const int FLIP_DELAY_MIN_FLIPS = 30;
+		// Since we move nextFlipCycles forward a whole frame each time, we allow it to be a little ahead.
+		// Otherwise it'll always be ahead if the game messes up even once.
+		const s64 LEEWAY_CYCLES_PER_FLIP = usToCycles(10);
 
 		u64 now = CoreTiming::GetTicks();
-		// 1001 to account for NTSC timing (59.94 fps.)
-		u64 expected = msToCycles(1001) / g_Config.iForceMaxEmulatedFPS;
-		u64 actual = now - lastFlipCycles;
-		if (actual < expected - FLIP_DELAY_CYCLES_MIN) {
-			if (lastFlipsTooFrequent >= FLIP_DELAY_MIN_FLIPS) {
-				delayCycles = expected - actual;
+		s64 cyclesAhead = nextFlipCycles - now;
+		if (cyclesAhead > FLIP_DELAY_CYCLES_MIN) {
+			if (lastFlipsTooFrequent >= FLIP_DELAY_MIN_FLIPS && gpuStats.numClears > 0) {
+				delayCycles = cyclesAhead;
 			} else {
 				++lastFlipsTooFrequent;
 			}
-		} else {
+		} else if (-lastFlipsTooFrequent < FLIP_DELAY_MIN_FLIPS) {
 			--lastFlipsTooFrequent;
 		}
-		lastFlipCycles = CoreTiming::GetTicks();
+
+		// 1001 to account for NTSC timing (59.94 fps.)
+		u64 expected = msToCycles(1001) / g_Config.iForceMaxEmulatedFPS - LEEWAY_CYCLES_PER_FLIP;
+		lastFlipCycles = now;
+		nextFlipCycles = std::max(lastFlipCycles, nextFlipCycles) + expected;
 	}
 
 	__DisplaySetFramebuf(topaddr, linesize, pixelformat, sync);

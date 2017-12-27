@@ -19,10 +19,10 @@
 
 #include <cmath>
 
-#include "Globals.h"
+#include "Common/Common.h"
+#include "Common/Swap.h"
 #include "GPU/GPU.h"
 #include "GPU/ge_constants.h"
-#include "Common/Common.h"
 #include "GPU/Common/ShaderCommon.h"
 
 class PointerWrap;
@@ -60,7 +60,7 @@ struct GPUgstate {
 				lightEnable[4],
 				clipEnable,
 				cullfaceEnable,
-				textureMapEnable,
+				textureMapEnable,  // 0x1E GE_CMD_TEXTUREMAPENABLE
 				fogEnable,
 				ditherEnable,
 				alphaBlendEnable,
@@ -116,8 +116,8 @@ struct GPUgstate {
 				materialspecularcoef, // 0x5B
 				ambientcolor,         // 0x5C
 				ambientalpha,         // 0x5D
-				lmode,                // 0x5E
-				ltype[4],             // 0x5F-0x62
+				lmode,                // 0x5E      GE_CMD_LIGHTMODE
+				ltype[4],             // 0x5F-0x62 GE_CMD_LIGHTTYPEx
 				lpos[12],             // 0x63-0x6E
 				ldir[12],             // 0x6F-0x7A
 				latt[12],             // 0x7B-0x86
@@ -141,7 +141,7 @@ struct GPUgstate {
 				texsize[8],           // 0xB8-BF
 				texmapmode,           // 0xC0
 				texshade,             // 0xC1
-				texmode,              // 0xC2
+				texmode,              // 0xC2 GE_CMD_TEXMODE
 				texformat,            // 0xC3
 				loadclut,             // 0xC4
 				clutformat,           // 0xC5
@@ -158,7 +158,7 @@ struct GPUgstate {
 				texlodslope,          // 0xD0
 				padxxxxxx,            // 0xD1
 				framebufpixformat,    // 0xD2
-				clearmode,            // 0xD3
+				clearmode,            // 0xD3 GE_CMD_CLEARMODE
 				scissor1,
 				scissor2,
 				minz,
@@ -185,9 +185,20 @@ struct GPUgstate {
 				transfersrcpos,
 				transferdstpos,
 				pad99,
-				transfersize;  // 0xEE
-
-			u32 pad05[0xFF- 0xEE];
+				transfersize,  // 0xEE
+				pad100,         // 0xEF
+				imm_vscx,        // 0xF0
+				imm_vscy,
+				imm_vscz,
+				imm_vtcs,
+				imm_vtct,
+				imm_vtcq,
+				imm_cv,
+				imm_ap,
+				imm_fc,
+				imm_scv;   // 0xF9
+				// In the unlikely case we ever add anything else here, don't forget to update the padding on the next line!
+			u32 pad05[0xFF- 0xF9];
 		};
 	};
 
@@ -466,6 +477,7 @@ enum {
 	GPU_SUPPORTS_VERTEX_TEXTURE_FETCH = FLAG_BIT(11),
 	GPU_SUPPORTS_TEXTURE_FLOAT = FLAG_BIT(12),
 	GPU_SUPPORTS_16BIT_FORMATS = FLAG_BIT(13),
+	GPU_SUPPORTS_DEPTH_CLAMP = FLAG_BIT(14),
 	GPU_SUPPORTS_LARGE_VIEWPORTS = FLAG_BIT(16),
 	GPU_SUPPORTS_ACCURATE_DEPTH = FLAG_BIT(17),
 	GPU_SUPPORTS_VAO = FLAG_BIT(18),
@@ -479,7 +491,6 @@ enum {
 	GPU_SUPPORTS_ARB_FRAMEBUFFER_BLIT = FLAG_BIT(26),
 	GPU_SUPPORTS_NV_FRAMEBUFFER_BLIT = FLAG_BIT(27),
 	GPU_SUPPORTS_OES_TEXTURE_NPOT = FLAG_BIT(28),
-	GPU_IS_MOBILE = FLAG_BIT(29),
 	GPU_PREFER_CPU_DOWNLOAD = FLAG_BIT(30),
 	GPU_PREFER_REVERSE_COLOR_ORDER = FLAG_BIT(31),
 };
@@ -513,16 +524,12 @@ struct GPUStateCache {
 			Dirty(DIRTY_FRAGMENTSHADER_STATE);
 		}
 	}
-	void SetTextureSimpleAlpha(bool simpleAlpha) {
-		if (simpleAlpha != textureSimpleAlpha) {
-			textureSimpleAlpha = simpleAlpha;
-			Dirty(DIRTY_FRAGMENTSHADER_STATE);
-		}
-	}
 	void SetNeedShaderTexclamp(bool need) {
 		if (need != needShaderTexClamp) {
 			needShaderTexClamp = need;
 			Dirty(DIRTY_FRAGMENTSHADER_STATE);
+			if (need)
+				Dirty(DIRTY_TEXCLAMP);
 		}
 	}
 	void SetAllowShaderBlend(bool allow) {
@@ -541,7 +548,6 @@ struct GPUStateCache {
 	uint64_t dirty;
 
 	bool textureFullAlpha;
-	bool textureSimpleAlpha;
 	bool vertexFullAlpha;
 
 	int skipDrawReason;

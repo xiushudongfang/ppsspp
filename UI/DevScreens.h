@@ -87,7 +87,7 @@ private:
 class SystemInfoScreen : public UIDialogScreenWithBackground {
 public:
 	SystemInfoScreen() {}
-	virtual void CreateViews();
+	void CreateViews() override;
 };
 
 class AddressPromptScreen : public PopupScreen {
@@ -152,7 +152,7 @@ public:
 	void CreateViews() override;
 
 private:
-	void ListShaders(DebugShaderType shaderType, UI::LinearLayout *view);
+	int ListShaders(DebugShaderType shaderType, UI::LinearLayout *view);
 
 	UI::EventReturn OnShaderClick(UI::EventParams &e);
 

@@ -49,7 +49,7 @@ const CommonCommandTableEntry commonCommandTable[] = {
 	// Changes that dirty the framebuffer
 	{ GE_CMD_FRAMEBUFPTR, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS },
 	{ GE_CMD_FRAMEBUFWIDTH, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_VIEWPORTSCISSOR_STATE },
-	{ GE_CMD_FRAMEBUFPIXFORMAT, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_BLEND_STATE | DIRTY_DEPTHSTENCIL_STATE | DIRTY_FRAGMENTSHADER_STATE},
+	{ GE_CMD_FRAMEBUFPIXFORMAT, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_BLEND_STATE | DIRTY_DEPTHSTENCIL_STATE | DIRTY_FRAGMENTSHADER_STATE },
 	{ GE_CMD_ZBUFPTR, FLAG_FLUSHBEFOREONCHANGE },
 	{ GE_CMD_ZBUFWIDTH, FLAG_FLUSHBEFOREONCHANGE },
 
@@ -99,6 +99,7 @@ const CommonCommandTableEntry commonCommandTable[] = {
 	{ GE_CMD_CULLFACEENABLE, FLAG_FLUSHBEFOREONCHANGE, DIRTY_RASTER_STATE },
 	{ GE_CMD_DITHERENABLE, FLAG_FLUSHBEFOREONCHANGE, DIRTY_RASTER_STATE },
 	{ GE_CMD_STENCILOP, FLAG_FLUSHBEFOREONCHANGE, DIRTY_BLEND_STATE | DIRTY_DEPTHSTENCIL_STATE | DIRTY_FRAGMENTSHADER_STATE },
+	{ GE_CMD_STENCILTEST, FLAG_FLUSHBEFOREONCHANGE, DIRTY_STENCILREPLACEVALUE | DIRTY_BLEND_STATE | DIRTY_DEPTHSTENCIL_STATE },
 	{ GE_CMD_STENCILTESTENABLE, FLAG_FLUSHBEFOREONCHANGE, DIRTY_BLEND_STATE | DIRTY_DEPTHSTENCIL_STATE | DIRTY_FRAGMENTSHADER_STATE },
 	{ GE_CMD_ALPHABLENDENABLE, FLAG_FLUSHBEFOREONCHANGE, DIRTY_BLEND_STATE | DIRTY_FRAGMENTSHADER_STATE },
 	{ GE_CMD_BLENDMODE, FLAG_FLUSHBEFOREONCHANGE, DIRTY_BLEND_STATE | DIRTY_FRAGMENTSHADER_STATE },
@@ -181,7 +182,7 @@ const CommonCommandTableEntry commonCommandTable[] = {
 	{ GE_CMD_VIEWPORTYCENTER, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_VIEWPORTSCISSOR_STATE },
 	{ GE_CMD_VIEWPORTZSCALE, FLAG_FLUSHBEFOREONCHANGE,  DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_DEPTHRANGE | DIRTY_PROJMATRIX | DIRTY_VIEWPORTSCISSOR_STATE },
 	{ GE_CMD_VIEWPORTZCENTER, FLAG_FLUSHBEFOREONCHANGE, DIRTY_FRAMEBUF | DIRTY_TEXTURE_PARAMS | DIRTY_DEPTHRANGE | DIRTY_PROJMATRIX | DIRTY_VIEWPORTSCISSOR_STATE },
-	{ GE_CMD_CLIPENABLE, FLAG_FLUSHBEFOREONCHANGE, DIRTY_VIEWPORTSCISSOR_STATE },
+	{ GE_CMD_CLIPENABLE, FLAG_FLUSHBEFOREONCHANGE, DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_RASTER_STATE },
 
 	// Z clip
 	{ GE_CMD_MINZ, FLAG_FLUSHBEFOREONCHANGE, DIRTY_DEPTHRANGE | DIRTY_VIEWPORTSCISSOR_STATE },
@@ -303,16 +304,16 @@ const CommonCommandTableEntry commonCommandTable[] = {
 	{ GE_CMD_BONEMATRIXDATA,    FLAG_EXECUTE, 0, &GPUCommon::Execute_BoneMtxData },
 
 	// Vertex Screen/Texture/Color
-	{ GE_CMD_VSCX, FLAG_EXECUTE, 0, &GPUCommon::Execute_Unknown },
-	{ GE_CMD_VSCY, FLAG_EXECUTE, 0, &GPUCommon::Execute_Unknown },
-	{ GE_CMD_VSCZ, FLAG_EXECUTE, 0, &GPUCommon::Execute_Unknown },
-	{ GE_CMD_VTCS, FLAG_EXECUTE, 0, &GPUCommon::Execute_Unknown },
-	{ GE_CMD_VTCT, FLAG_EXECUTE, 0, &GPUCommon::Execute_Unknown },
-	{ GE_CMD_VTCQ, FLAG_EXECUTE, 0, &GPUCommon::Execute_Unknown },
-	{ GE_CMD_VCV, FLAG_EXECUTE, 0, &GPUCommon::Execute_Unknown },
-	{ GE_CMD_VAP, FLAG_EXECUTE, 0, &GPUCommon::Execute_Unknown },
-	{ GE_CMD_VFC, FLAG_EXECUTE, 0, &GPUCommon::Execute_Unknown },
-	{ GE_CMD_VSCV, FLAG_EXECUTE, 0, &GPUCommon::Execute_Unknown },
+	{ GE_CMD_VSCX },
+	{ GE_CMD_VSCY },
+	{ GE_CMD_VSCZ },
+	{ GE_CMD_VTCS },
+	{ GE_CMD_VTCT },
+	{ GE_CMD_VTCQ },
+	{ GE_CMD_VCV },
+	{ GE_CMD_VAP, FLAG_EXECUTE, 0, &GPUCommon::Execute_ImmVertexAlphaPrim },
+	{ GE_CMD_VFC },
+	{ GE_CMD_VSCV },
 
 	// "Missing" commands (gaps in the sequence)
 	{ GE_CMD_UNKNOWN_03, FLAG_EXECUTE, 0, &GPUCommon::Execute_Unknown },
@@ -359,11 +360,9 @@ GPUCommon::GPUCommon(GraphicsContext *gfxCtx, Draw::DrawContext *draw) :
 	// The compiler was not rounding the struct size up to an 8 byte boundary, which
 	// you'd expect due to the int64 field, but the Linux ABI apparently does not require that.
 	static_assert(sizeof(DisplayList) == 456, "Bad DisplayList size");
-	listLock.set_enabled(g_Config.bSeparateCPUThread);
 
 	Reinitialize();
 	SetupColorConv();
-	SetThreadEnabled(g_Config.bSeparateCPUThread);
 	gstate.Reset();
 	gstate_c.Reset();
 	gpuStats.Reset();
@@ -383,16 +382,7 @@ void GPUCommon::EndHostFrame() {
 
 }
 
-void GPUCommon::InitClear() {
-	ScheduleEvent(GPU_EVENT_INIT_CLEAR);
-}
-
-void GPUCommon::CopyDisplayToOutput() {
-	ScheduleEvent(GPU_EVENT_COPY_DISPLAY_TO_OUTPUT);
-}
-
 void GPUCommon::Reinitialize() {
-	easy_guard guard(listLock);
 	memset(dls, 0, sizeof(dls));
 	for (int i = 0; i < DisplayListMaxCount; ++i) {
 		dls[i].state = PSP_GE_DL_STATE_NONE;
@@ -400,14 +390,12 @@ void GPUCommon::Reinitialize() {
 	}
 
 	nextListID = 0;
-	currentList = NULL;
+	currentList = nullptr;
 	isbreak = false;
 	drawCompleteTicks = 0;
 	busyTicks = 0;
 	timeSpentStepping_ = 0.0;
 	interruptsEnabled_ = true;
-	UpdateTickEstimate(0);
-	ScheduleEvent(GPU_EVENT_REINITIALIZE);
 }
 
 int GPUCommon::EstimatePerVertexCost() {
@@ -440,7 +428,6 @@ int GPUCommon::EstimatePerVertexCost() {
 }
 
 void GPUCommon::PopDLQueue() {
-	easy_guard guard(listLock);
 	if(!dlQueue.empty()) {
 		dlQueue.pop_front();
 		if(!dlQueue.empty()) {
@@ -449,7 +436,7 @@ void GPUCommon::PopDLQueue() {
 			if (running)
 				currentList->state = PSP_GE_DL_STATE_RUNNING;
 		} else {
-			currentList = NULL;
+			currentList = nullptr;
 		}
 	}
 }
@@ -457,7 +444,6 @@ void GPUCommon::PopDLQueue() {
 bool GPUCommon::BusyDrawing() {
 	u32 state = DrawSync(1);
 	if (state == PSP_GE_LIST_DRAWING || state == PSP_GE_LIST_STALLING) {
-		easy_guard guard(listLock);
 		if (currentList && currentList->state != PSP_GE_DL_STATE_PAUSED) {
 			return true;
 		}
@@ -474,12 +460,6 @@ void GPUCommon::DumpNextFrame() {
 }
 
 u32 GPUCommon::DrawSync(int mode) {
-	if (ThreadEnabled()) {
-		// Sync first, because the CPU is usually faster than the emulated GPU.
-		SyncThread();
-	}
-
-	easy_guard guard(listLock);
 	if (mode < 0 || mode > 1)
 		return SCE_KERNEL_ERROR_INVALID_MODE;
 
@@ -521,7 +501,6 @@ u32 GPUCommon::DrawSync(int mode) {
 }
 
 void GPUCommon::CheckDrawSync() {
-	easy_guard guard(listLock);
 	if (dlQueue.empty()) {
 		for (int i = 0; i < DisplayListMaxCount; ++i)
 			dls[i].state = PSP_GE_DL_STATE_NONE;
@@ -529,12 +508,6 @@ void GPUCommon::CheckDrawSync() {
 }
 
 int GPUCommon::ListSync(int listid, int mode) {
-	if (ThreadEnabled()) {
-		// Sync first, because the CPU is usually faster than the emulated GPU.
-		SyncThread();
-	}
-
-	easy_guard guard(listLock);
 	if (listid < 0 || listid >= DisplayListMaxCount)
 		return SCE_KERNEL_ERROR_INVALID_ID;
 
@@ -579,8 +552,7 @@ int GPUCommon::ListSync(int listid, int mode) {
 }
 
 int GPUCommon::GetStack(int index, u32 stackPtr) {
-	easy_guard guard(listLock);
-	if (currentList == NULL) {
+	if (!currentList) {
 		// Seems like it doesn't return an error code?
 		return 0;
 	}
@@ -605,7 +577,6 @@ int GPUCommon::GetStack(int index, u32 stackPtr) {
 }
 
 u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<PspGeListArgs> args, bool head) {
-	easy_guard guard(listLock);
 	// TODO Check the stack values in missing arg and ajust the stack depth
 
 	// Check alignment
@@ -704,7 +675,6 @@ u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<Ps
 		drawCompleteTicks = (u64)-1;
 
 		// TODO save context when starting the list if param is set
-		guard.unlock();
 		ProcessDLQueue();
 	}
 
@@ -712,7 +682,6 @@ u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<Ps
 }
 
 u32 GPUCommon::DequeueList(int listid) {
-	easy_guard guard(listLock);
 	if (listid < 0 || listid >= DisplayListMaxCount || dls[listid].state == PSP_GE_DL_STATE_NONE)
 		return SCE_KERNEL_ERROR_INVALID_ID;
 
@@ -736,7 +705,6 @@ u32 GPUCommon::DequeueList(int listid) {
 }
 
 u32 GPUCommon::UpdateStall(int listid, u32 newstall) {
-	easy_guard guard(listLock);
 	if (listid < 0 || listid >= DisplayListMaxCount || dls[listid].state == PSP_GE_DL_STATE_NONE)
 		return SCE_KERNEL_ERROR_INVALID_ID;
 	auto &dl = dls[listid];
@@ -745,14 +713,12 @@ u32 GPUCommon::UpdateStall(int listid, u32 newstall) {
 
 	dl.stall = newstall & 0x0FFFFFFF;
 	
-	guard.unlock();
 	ProcessDLQueue();
 
 	return 0;
 }
 
 u32 GPUCommon::Continue() {
-	easy_guard guard(listLock);
 	if (!currentList)
 		return 0;
 
@@ -788,13 +754,11 @@ u32 GPUCommon::Continue() {
 		return -1;
 	}
 
-	guard.unlock();
 	ProcessDLQueue();
 	return 0;
 }
 
 u32 GPUCommon::Break(int mode) {
-	easy_guard guard(listLock);
 	if (mode < 0 || mode > 1)
 		return SCE_KERNEL_ERROR_INVALID_MODE;
 
@@ -883,8 +847,6 @@ bool GPUCommon::InterpretList(DisplayList &list) {
 		start = time_now_d();
 	}
 
-	easy_guard guard(listLock);
-
 	if (list.state == PSP_GE_DL_STATE_PAUSED)
 		return false;
 	currentList = &list;
@@ -908,14 +870,12 @@ bool GPUCommon::InterpretList(DisplayList &list) {
 	list.interrupted = false;
 
 	gpuState = list.pc == list.stall ? GPUSTATE_STALL : GPUSTATE_RUNNING;
-	guard.unlock();
 
 	debugRecording_ = GPURecord::IsActive();
 	const bool useDebugger = host->GPUDebuggingActive() || debugRecording_;
 	const bool useFastRunLoop = !dumpThisFrame_ && !useDebugger;
 	while (gpuState == GPUSTATE_RUNNING) {
 		{
-			easy_guard innerGuard(listLock);
 			if (list.pc == list.stall) {
 				gpuState = GPUSTATE_STALL;
 				downcount = 0;
@@ -929,7 +889,6 @@ bool GPUCommon::InterpretList(DisplayList &list) {
 		}
 
 		{
-			easy_guard innerGuard(listLock);
 			downcount = list.stall == 0 ? 0x0FFFFFFF : (list.stall - list.pc) / 4;
 
 			if (gpuState == GPUSTATE_STALL && list.stall != list.pc) {
@@ -959,10 +918,7 @@ bool GPUCommon::InterpretList(DisplayList &list) {
 }
 
 void GPUCommon::BeginFrame() {
-	ScheduleEvent(GPU_EVENT_BEGIN_FRAME);
-}
-
-void GPUCommon::BeginFrameInternal() {
+	immCount_ = 0;
 	if (dumpNextFrame_) {
 		NOTICE_LOG(G3D, "DUMPING THIS FRAME");
 		dumpThisFrame_ = true;
@@ -1026,14 +982,6 @@ void GPUCommon::UpdatePC(u32 currentPC, u32 newPC) {
 }
 
 void GPUCommon::ReapplyGfxState() {
-	if (IsOnSeparateCPUThread()) {
-		ScheduleEvent(GPU_EVENT_REAPPLY_GFX_STATE);
-	} else {
-		ReapplyGfxStateInternal();
-	}
-}
-
-void GPUCommon::ReapplyGfxStateInternal() {
 	// The commands are embedded in the command memory so we can just reexecute the words. Convenient.
 	// To be safe we pass 0xFFFFFFFF as the diff.
 
@@ -1064,55 +1012,7 @@ inline void GPUCommon::UpdateState(GPURunState state) {
 		downcount = 0;
 }
 
-void GPUCommon::ProcessEvent(GPUEvent ev) {
-	switch (ev.type) {
-	case GPU_EVENT_PROCESS_QUEUE:
-		ProcessDLQueueInternal();
-		break;
-
-	case GPU_EVENT_REAPPLY_GFX_STATE:
-		ReapplyGfxStateInternal();
-		break;
-
-	case GPU_EVENT_INIT_CLEAR:
-		InitClearInternal();
-		break;
-
-	case GPU_EVENT_BEGIN_FRAME:
-		BeginFrameInternal();
-		break;
-
-	case GPU_EVENT_COPY_DISPLAY_TO_OUTPUT:
-		CopyDisplayToOutputInternal();
-		break;
-
-	case GPU_EVENT_INVALIDATE_CACHE:
-		InvalidateCacheInternal(ev.invalidate_cache.addr, ev.invalidate_cache.size, ev.invalidate_cache.type);
-		break;
-
-	case GPU_EVENT_FB_MEMCPY:
-		PerformMemoryCopyInternal(ev.fb_memcpy.dst, ev.fb_memcpy.src, ev.fb_memcpy.size);
-		break;
-
-	case GPU_EVENT_FB_MEMSET:
-		PerformMemorySetInternal(ev.fb_memset.dst, ev.fb_memset.v, ev.fb_memset.size);
-		break;
-
-	case GPU_EVENT_FB_STENCIL_UPLOAD:
-		PerformStencilUploadInternal(ev.fb_stencil_upload.dst, ev.fb_stencil_upload.size);
-		break;
-
-	case GPU_EVENT_REINITIALIZE:
-		break;
-
-	default:
-		ERROR_LOG_REPORT(G3D, "Unexpected GPU event type: %d", (int)ev);
-		break;
-	}
-}
-
 int GPUCommon::GetNextListIndex() {
-	easy_guard guard(listLock);
 	auto iter = dlQueue.begin();
 	if (iter != dlQueue.end()) {
 		return *iter;
@@ -1121,15 +1021,9 @@ int GPUCommon::GetNextListIndex() {
 	}
 }
 
-bool GPUCommon::ProcessDLQueue() {
-	ScheduleEvent(GPU_EVENT_PROCESS_QUEUE);
-	return true;
-}
-
-void GPUCommon::ProcessDLQueueInternal() {
+void GPUCommon::ProcessDLQueue() {
 	startingTicks = CoreTiming::GetTicks();
 	cyclesExecuted = 0;
-	UpdateTickEstimate(std::max(busyTicks, startingTicks + cyclesExecuted));
 
 	// Seems to be correct behaviour to process the list anyway?
 	if (startingTicks < busyTicks) {
@@ -1143,25 +1037,20 @@ void GPUCommon::ProcessDLQueueInternal() {
 		if (!InterpretList(l)) {
 			return;
 		} else {
-			easy_guard guard(listLock);
-
 			// Some other list could've taken the spot while we dilly-dallied around.
 			if (l.state != PSP_GE_DL_STATE_QUEUED) {
 				// At the end, we can remove it from the queue and continue.
 				dlQueue.erase(std::remove(dlQueue.begin(), dlQueue.end(), listIndex), dlQueue.end());
 			}
-			UpdateTickEstimate(std::max(busyTicks, startingTicks + cyclesExecuted));
 		}
 	}
 
-	easy_guard guard(listLock);
-	currentList = NULL;
+	currentList = nullptr;
 
 	drawCompleteTicks = startingTicks + cyclesExecuted;
 	busyTicks = std::max(busyTicks, drawCompleteTicks);
 	__GeTriggerSync(GPU_SYNC_DRAW, 1, drawCompleteTicks);
 	// Since the event is in CoreTiming, we're in sync.  Just set 0 now.
-	UpdateTickEstimate(0);
 }
 
 void GPUCommon::PreExecuteOp(u32 op, u32 diff) {
@@ -1181,12 +1070,10 @@ void GPUCommon::Execute_Iaddr(u32 op, u32 diff) {
 }
 
 void GPUCommon::Execute_Origin(u32 op, u32 diff) {
-	easy_guard guard(listLock);
 	gstate_c.offsetAddr = currentList->pc;
 }
 
 void GPUCommon::Execute_Jump(u32 op, u32 diff) {
-	easy_guard guard(listLock);
 	const u32 target = gstate_c.getRelativeAddress(op & 0x00FFFFFC);
 #ifdef _DEBUG
 	if (!Memory::IsValidAddress(target)) {
@@ -1201,7 +1088,6 @@ void GPUCommon::Execute_Jump(u32 op, u32 diff) {
 void GPUCommon::Execute_BJump(u32 op, u32 diff) {
 	if (!currentList->bboxResult) {
 		// bounding box jump.
-		easy_guard guard(listLock);
 		const u32 target = gstate_c.getRelativeAddress(op & 0x00FFFFFC);
 		if (Memory::IsValidAddress(target)) {
 			UpdatePC(currentList->pc, target - 4);
@@ -1214,7 +1100,6 @@ void GPUCommon::Execute_BJump(u32 op, u32 diff) {
 
 void GPUCommon::Execute_Call(u32 op, u32 diff) {
 	PROFILE_THIS_SCOPE("gpu_call");
-	easy_guard guard(listLock);
 
 	// Saint Seiya needs correct support for relative calls.
 	const u32 retval = currentList->pc + 4;
@@ -1253,7 +1138,6 @@ void GPUCommon::Execute_Call(u32 op, u32 diff) {
 }
 
 void GPUCommon::Execute_Ret(u32 op, u32 diff) {
-	easy_guard guard(listLock);
 	if (currentList->stackptr == 0) {
 		DEBUG_LOG_REPORT(G3D, "RET: Stack empty!");
 	} else {
@@ -1275,7 +1159,6 @@ void GPUCommon::Execute_Ret(u32 op, u32 diff) {
 void GPUCommon::Execute_End(u32 op, u32 diff) {
 	Flush();
 
-	easy_guard guard(listLock);
 	const u32 prev = Memory::ReadUnchecked_U32(currentList->pc - 4);
 	UpdatePC(currentList->pc, currentList->pc);
 	// Count in a few extra cycles on END.
@@ -1419,7 +1302,7 @@ void GPUCommon::Execute_End(u32 op, u32 diff) {
 				__GeTriggerSync(GPU_SYNC_LIST, currentList->id, currentList->waitTicks);
 				if (currentList->started && currentList->context.IsValid()) {
 					gstate.Restore(currentList->context);
-					ReapplyGfxStateInternal();
+					ReapplyGfxState();
 				}
 			}
 			break;
@@ -1442,8 +1325,55 @@ void GPUCommon::Execute_TexLevel(u32 op, u32 diff) {
 	gstate_c.Dirty(DIRTY_TEXTURE_PARAMS | DIRTY_FRAGMENTSHADER_STATE);
 }
 
+void GPUCommon::Execute_TexSize0(u32 op, u32 diff) {
+	// Render to texture may have overridden the width/height.
+	// Don't reset it unless the size is different / the texture has changed.
+	if (diff || gstate_c.IsDirty(DIRTY_TEXTURE_IMAGE | DIRTY_TEXTURE_PARAMS)) {
+		gstate_c.curTextureWidth = gstate.getTextureWidth(0);
+		gstate_c.curTextureHeight = gstate.getTextureHeight(0);
+		gstate_c.Dirty(DIRTY_UVSCALEOFFSET);
+		// We will need to reset the texture now.
+		gstate_c.Dirty(DIRTY_TEXTURE_PARAMS);
+	}
+}
+
+void GPUCommon::Execute_VertexType(u32 op, u32 diff) {
+	if (diff)
+		gstate_c.Dirty(DIRTY_VERTEXSHADER_STATE);
+	if (diff & (GE_VTYPE_TC_MASK | GE_VTYPE_THROUGH_MASK)) {
+		gstate_c.Dirty(DIRTY_UVSCALEOFFSET);
+		if (diff & GE_VTYPE_THROUGH_MASK)
+			gstate_c.Dirty(DIRTY_RASTER_STATE | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_FRAGMENTSHADER_STATE);
+	}
+}
+
+void GPUCommon::Execute_VertexTypeSkinning(u32 op, u32 diff) {
+	// Don't flush when weight count changes, unless morph is enabled.
+	if ((diff & ~GE_VTYPE_WEIGHTCOUNT_MASK) || (op & GE_VTYPE_MORPHCOUNT_MASK) != 0) {
+		// Restore and flush
+		gstate.vertType ^= diff;
+		Flush();
+		gstate.vertType ^= diff;
+		if (diff & (GE_VTYPE_TC_MASK | GE_VTYPE_THROUGH_MASK))
+			gstate_c.Dirty(DIRTY_UVSCALEOFFSET);
+		// In this case, we may be doing weights and morphs.
+		// Update any bone matrix uniforms so it uses them correctly.
+		if ((op & GE_VTYPE_MORPHCOUNT_MASK) != 0) {
+			gstate_c.Dirty(gstate_c.deferredVertTypeDirty);
+			gstate_c.deferredVertTypeDirty = 0;
+		}
+		gstate_c.Dirty(DIRTY_VERTEXSHADER_STATE);
+	}
+	if (diff & GE_VTYPE_THROUGH_MASK)
+		gstate_c.Dirty(DIRTY_RASTER_STATE | DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_FRAGMENTSHADER_STATE);
+}
+
 void GPUCommon::Execute_Bezier(u32 op, u32 diff) {
-	Flush();
+	drawEngineCommon_->DispatchFlush();
+
+	// We don't dirty on normal changes anymore as we prescale, but it's needed for splines/bezier.
+	gstate_c.Dirty(DIRTY_UVSCALEOFFSET);
+
 	// This also make skipping drawing very effective.
 	framebufferManager_->SetRenderFrameBuffer(gstate_c.IsDirty(DIRTY_FRAMEBUF), gstate_c.skipDrawReason);
 	if (gstate_c.skipDrawReason & (SKIPDRAW_SKIPFRAME | SKIPDRAW_NON_DISPLAYED_FB)) {
@@ -1466,20 +1396,34 @@ void GPUCommon::Execute_Bezier(u32 op, u32 diff) {
 		indices = Memory::GetPointerUnchecked(gstate_c.indexAddr);
 	}
 
-	if (gstate.vertType & GE_VTYPE_MORPHCOUNT_MASK) {
-		DEBUG_LOG_REPORT(G3D, "Bezier + morph: %i", (gstate.vertType & GE_VTYPE_MORPHCOUNT_MASK) >> GE_VTYPE_MORPHCOUNT_SHIFT);
-	}
-	if (vertTypeIsSkinningEnabled(gstate.vertType)) {
-		DEBUG_LOG_REPORT(G3D, "Bezier + skinning: %i", vertTypeGetNumBoneWeights(gstate.vertType));
+	if ((gstate.vertType & GE_VTYPE_MORPHCOUNT_MASK) || vertTypeIsSkinningEnabled(gstate.vertType)) {
+		DEBUG_LOG_REPORT(G3D, "Unusual bezier/spline vtype: %08x, morph: %d, bones: %d", gstate.vertType, (gstate.vertType & GE_VTYPE_MORPHCOUNT_MASK) >> GE_VTYPE_MORPHCOUNT_SHIFT, vertTypeGetNumBoneWeights(gstate.vertType));
 	}
 
 	GEPatchPrimType patchPrim = gstate.getPatchPrimitiveType();
+	SetDrawType(DRAW_BEZIER, PatchPrimToPrim(patchPrim));
+
 	int bz_ucount = op & 0xFF;
 	int bz_vcount = (op >> 8) & 0xFF;
 	bool computeNormals = gstate.isLightingEnabled();
 	bool patchFacing = gstate.patchfacing & 1;
+
+	if (g_Config.bHardwareTessellation && g_Config.bHardwareTransform && !g_Config.bSoftwareRendering) {
+		gstate_c.Dirty(DIRTY_VERTEXSHADER_STATE);
+		gstate_c.bezier = true;
+		if (gstate_c.spline_count_u != bz_ucount) {
+			gstate_c.Dirty(DIRTY_BEZIERSPLINE);
+			gstate_c.spline_count_u = bz_ucount;
+		}
+	}
+
 	int bytesRead = 0;
+	UpdateUVScaleOffset();
 	drawEngineCommon_->SubmitBezier(control_points, indices, gstate.getPatchDivisionU(), gstate.getPatchDivisionV(), bz_ucount, bz_vcount, patchPrim, computeNormals, patchFacing, gstate.vertType, &bytesRead);
+
+	if (gstate_c.bezier)
+		gstate_c.Dirty(DIRTY_VERTEXSHADER_STATE);
+	gstate_c.bezier = false;
 
 	// After drawing, we advance pointers - see SubmitPrim which does the same.
 	int count = bz_ucount * bz_vcount;
@@ -1487,7 +1431,11 @@ void GPUCommon::Execute_Bezier(u32 op, u32 diff) {
 }
 
 void GPUCommon::Execute_Spline(u32 op, u32 diff) {
-	Flush();
+	drawEngineCommon_->DispatchFlush();
+
+	// We don't dirty on normal changes anymore as we prescale, but it's needed for splines/bezier.
+	gstate_c.Dirty(DIRTY_UVSCALEOFFSET);
+
 	// This also make skipping drawing very effective.
 	framebufferManager_->SetRenderFrameBuffer(gstate_c.IsDirty(DIRTY_FRAMEBUF), gstate_c.skipDrawReason);
 	if (gstate_c.skipDrawReason & (SKIPDRAW_SKIPFRAME | SKIPDRAW_NON_DISPLAYED_FB)) {
@@ -1522,11 +1470,32 @@ void GPUCommon::Execute_Spline(u32 op, u32 diff) {
 	int sp_utype = (op >> 16) & 0x3;
 	int sp_vtype = (op >> 18) & 0x3;
 	GEPatchPrimType patchPrim = gstate.getPatchPrimitiveType();
+	SetDrawType(DRAW_SPLINE, PatchPrimToPrim(patchPrim));
 	bool computeNormals = gstate.isLightingEnabled();
 	bool patchFacing = gstate.patchfacing & 1;
 	u32 vertType = gstate.vertType;
+
+	if (g_Config.bHardwareTessellation && g_Config.bHardwareTransform && !g_Config.bSoftwareRendering) {
+		gstate_c.Dirty(DIRTY_VERTEXSHADER_STATE);
+		gstate_c.spline = true;
+		bool countsChanged = gstate_c.spline_count_u != sp_ucount || gstate_c.spline_count_v != sp_vcount;
+		bool typesChanged = gstate_c.spline_type_u != sp_utype || gstate_c.spline_type_v != sp_vtype;
+		if (countsChanged || typesChanged) {
+			gstate_c.Dirty(DIRTY_BEZIERSPLINE);
+			gstate_c.spline_count_u = sp_ucount;
+			gstate_c.spline_count_v = sp_vcount;
+			gstate_c.spline_type_u = sp_utype;
+			gstate_c.spline_type_v = sp_vtype;
+		}
+	}
+
 	int bytesRead = 0;
+	UpdateUVScaleOffset();
 	drawEngineCommon_->SubmitSpline(control_points, indices, gstate.getPatchDivisionU(), gstate.getPatchDivisionV(), sp_ucount, sp_vcount, sp_utype, sp_vtype, patchPrim, computeNormals, patchFacing, vertType, &bytesRead);
+
+	if (gstate_c.spline)
+		gstate_c.Dirty(DIRTY_VERTEXSHADER_STATE);
+	gstate_c.spline = false;
 
 	// After drawing, we advance pointers - see SubmitPrim which does the same.
 	int count = sp_ucount * sp_vcount;
@@ -1535,13 +1504,17 @@ void GPUCommon::Execute_Spline(u32 op, u32 diff) {
 
 void GPUCommon::Execute_BoundingBox(u32 op, u32 diff) {
 	// Just resetting, nothing to check bounds for.
-	const u32 data = op & 0x00FFFFFF;
-	if (data == 0) {
+	const u32 count = op & 0xFFFFFF;
+	if (count == 0) {
 		currentList->bboxResult = false;
 		return;
 	}
-	if (((data & 7) == 0) && data <= 64) {  // Sanity check
+	if (((count & 7) == 0) && count <= 64) {  // Sanity check
 		void *control_points = Memory::GetPointer(gstate_c.vertexAddr);
+		if (!control_points) {
+			return;
+		}
+
 		if (gstate.vertType & GE_VTYPE_IDX_MASK) {
 			ERROR_LOG_REPORT_ONCE(boundingbox, G3D, "Indexed bounding box data not supported.");
 			// Data seems invalid. Let's assume the box test passed.
@@ -1550,11 +1523,11 @@ void GPUCommon::Execute_BoundingBox(u32 op, u32 diff) {
 		}
 
 		// Test if the bounding box is within the drawing region.
-		if (control_points) {
-			currentList->bboxResult = drawEngineCommon_->TestBoundingBox(control_points, data, gstate.vertType);
-		}
+		int bytesRead;
+		currentList->bboxResult = drawEngineCommon_->TestBoundingBox(control_points, count, gstate.vertType, &bytesRead);
+		AdvanceVerts(gstate.vertType, count, bytesRead);
 	} else {
-		ERROR_LOG_REPORT_ONCE(boundingbox, G3D, "Bad bounding box data: %06x", data);
+		ERROR_LOG_REPORT_ONCE(boundingbox, G3D, "Bad bounding box data: %06x", count);
 		// Data seems invalid. Let's assume the box test passed.
 		currentList->bboxResult = true;
 	}
@@ -1600,7 +1573,6 @@ void GPUCommon::Execute_WorldMtxNum(u32 op, u32 diff) {
 	gstate.worldmtxnum = (GE_CMD_WORLDMATRIXNUMBER << 24) | ((op + count) & 0xF);
 
 	// Skip over the loaded data, it's done now.
-	easy_guard innerGuard(listLock);
 	UpdatePC(currentList->pc, currentList->pc + count * 4);
 	currentList->pc += count * 4;
 }
@@ -1648,7 +1620,6 @@ void GPUCommon::Execute_ViewMtxNum(u32 op, u32 diff) {
 	gstate.viewmtxnum = (GE_CMD_VIEWMATRIXNUMBER << 24) | ((op + count) & 0xF);
 
 	// Skip over the loaded data, it's done now.
-	easy_guard innerGuard(listLock);
 	UpdatePC(currentList->pc, currentList->pc + count * 4);
 	currentList->pc += count * 4;
 }
@@ -1696,7 +1667,6 @@ void GPUCommon::Execute_ProjMtxNum(u32 op, u32 diff) {
 	gstate.projmtxnum = (GE_CMD_PROJMATRIXNUMBER << 24) | ((op + count) & 0x1F);
 
 	// Skip over the loaded data, it's done now.
-	easy_guard innerGuard(listLock);
 	UpdatePC(currentList->pc, currentList->pc + count * 4);
 	currentList->pc += count * 4;
 }
@@ -1745,7 +1715,6 @@ void GPUCommon::Execute_TgenMtxNum(u32 op, u32 diff) {
 	gstate.texmtxnum = (GE_CMD_TGENMATRIXNUMBER << 24) | ((op + count) & 0xF);
 
 	// Skip over the loaded data, it's done now.
-	easy_guard innerGuard(listLock);
 	UpdatePC(currentList->pc, currentList->pc + count * 4);
 	currentList->pc += count * 4;
 }
@@ -1770,7 +1739,7 @@ void GPUCommon::Execute_BoneMtxNum(u32 op, u32 diff) {
 	const int end = 12 * 8 - (op & 0x7F);
 	int i = 0;
 
-	bool fastLoad = !debugRecording_;
+	bool fastLoad = !debugRecording_ && end > 0;
 	if (currentList->pc < currentList->stall && currentList->pc + end * 4 >= currentList->stall) {
 		fastLoad = false;
 	}
@@ -1789,7 +1758,7 @@ void GPUCommon::Execute_BoneMtxNum(u32 op, u32 diff) {
 				}
 			}
 
-			const int numPlusCount = (op & 0x7F) + i;
+			const unsigned int numPlusCount = (op & 0x7F) + i;
 			for (unsigned int num = op & 0x7F; num < numPlusCount; num += 12) {
 				gstate_c.Dirty(DIRTY_BONEMATRIX0 << (num / 12));
 			}
@@ -1801,7 +1770,7 @@ void GPUCommon::Execute_BoneMtxNum(u32 op, u32 diff) {
 				}
 			}
 
-			const int numPlusCount = (op & 0x7F) + i;
+			const unsigned int numPlusCount = (op & 0x7F) + i;
 			for (unsigned int num = op & 0x7F; num < numPlusCount; num += 12) {
 				gstate_c.deferredVertTypeDirty |= DIRTY_BONEMATRIX0 << (num / 12);
 			}
@@ -1812,7 +1781,6 @@ void GPUCommon::Execute_BoneMtxNum(u32 op, u32 diff) {
 	gstate.boneMatrixNumber = (GE_CMD_BONEMATRIXNUMBER << 24) | ((op + count) & 0x7F);
 
 	// Skip over the loaded data, it's done now.
-	easy_guard innerGuard(listLock);
 	UpdatePC(currentList->pc, currentList->pc + count * 4);
 	currentList->pc += count * 4;
 }
@@ -1837,6 +1805,80 @@ void GPUCommon::Execute_BoneMtxData(u32 op, u32 diff) {
 
 void GPUCommon::Execute_MorphWeight(u32 op, u32 diff) {
 	gstate_c.morphWeights[(op >> 24) - GE_CMD_MORPHWEIGHT0] = getFloat24(op);
+}
+
+void GPUCommon::Execute_ImmVertexAlphaPrim(u32 op, u32 diff) {
+	// Safety check.
+	if (immCount_ >= MAX_IMMBUFFER_SIZE) {
+		// Only print once for each overrun.
+		if (immCount_ == MAX_IMMBUFFER_SIZE) {
+			ERROR_LOG_REPORT_ONCE(exceed_imm_buffer, G3D, "Exceeded immediate draw buffer size. gstate.imm_ap=%06x , prim=%d", gstate.imm_ap & 0xFFFFFF, (int)immPrim_);
+		}
+		if (immCount_ < 0x7fffffff)  // Paranoia :)
+			immCount_++;
+		return;
+	}
+
+	uint32_t data = op & 0xFFFFFF;
+	TransformedVertex &v = immBuffer_[immCount_++];
+
+	// Formula deduced from ThrillVille's clear.
+	int offsetX = gstate.getOffsetX16();
+	int offsetY = gstate.getOffsetY16();
+	v.x = ((gstate.imm_vscx & 0xFFFFFF) - offsetX) / 16.0f;
+	v.y = ((gstate.imm_vscy & 0xFFFFFF) - offsetY) / 16.0f;
+	v.z = gstate.imm_vscz & 0xFFFF;
+	v.u = getFloat24(gstate.imm_vtcs);
+	v.v = getFloat24(gstate.imm_vtct);
+	v.w = getFloat24(gstate.imm_vtcq);
+	v.color0_32 = (gstate.imm_cv & 0xFFFFFF) | (gstate.imm_ap << 24);
+	v.fog = 0.0f; // we have no information about the scale here
+	v.color1_32 = gstate.imm_scv & 0xFFFFFF;
+	int prim = (op >> 8) & 0x7;
+	if (prim != GE_PRIM_KEEP_PREVIOUS) {
+		immPrim_ = (GEPrimitiveType)prim;
+	} else if (prim == GE_PRIM_KEEP_PREVIOUS && immCount_ == 2) {
+		// Instead of finding a proper point to flush, we just emit a full rectangle every time one
+		// is finished.
+		FlushImm();
+		// Need to reset immCount_ here. If we do it in FlushImm it could get skipped by gstate_c.skipDrawReason.
+		immCount_ = 0;
+	} else {
+		ERROR_LOG_REPORT_ONCE(imm_draw_prim, G3D, "Immediate draw: Unexpected primitive %d at count %d", prim, immCount_);
+	}
+}
+
+void GPUCommon::FlushImm() {
+	SetDrawType(DRAW_PRIM, immPrim_);
+	framebufferManager_->SetRenderFrameBuffer(gstate_c.IsDirty(DIRTY_FRAMEBUF), gstate_c.skipDrawReason);
+	if (gstate_c.skipDrawReason & (SKIPDRAW_SKIPFRAME | SKIPDRAW_NON_DISPLAYED_FB)) {
+		// No idea how many cycles to skip, heh.
+		return;
+	}
+	UpdateUVScaleOffset();
+
+	// Instead of plumbing through properly (we'd need to inject these pretransformed vertices in the middle
+	// of SoftwareTransform(), which would take a lot of refactoring), we'll cheat and just turn these into
+	// through vertices.
+	// Since the only known use is Thrillville and it only uses it to clear, we just use color and pos.
+	struct ImmVertex {
+		uint32_t color;
+		float xyz[3];
+	};
+	ImmVertex temp[MAX_IMMBUFFER_SIZE];
+	for (int i = 0; i < immCount_; i++) {
+		temp[i].color = immBuffer_[i].color0_32;
+		temp[i].xyz[0] = immBuffer_[i].pos[0];
+		temp[i].xyz[1] = immBuffer_[i].pos[1];
+		temp[i].xyz[2] = immBuffer_[i].pos[2];
+	}
+	int vtype = GE_VTYPE_POS_FLOAT | GE_VTYPE_COL_8888 | GE_VTYPE_THROUGH;
+
+	int bytesRead;
+	drawEngineCommon_->DispatchSubmitPrim(temp, nullptr, immPrim_, immCount_, vtype, &bytesRead);
+	drawEngineCommon_->DispatchFlush();
+	// TOOD: In the future, make a special path for these.
+	// drawEngineCommon_->DispatchSubmitImm(immBuffer_, immCount_);
 }
 
 void GPUCommon::ExecuteOp(u32 op, u32 diff) {
@@ -1887,85 +1929,8 @@ void GPUCommon::ExecuteOp(u32 op, u32 diff) {
 }
 
 void GPUCommon::Execute_Unknown(u32 op, u32 diff) {
-	switch (op >> 24) {
-	case GE_CMD_VSCX:
-		if ((op & 0xFFFFFF) != 0)
-			WARN_LOG_REPORT_ONCE(vscx, G3D, "Unsupported Vertex Screen Coordinate X : %06x", op);
-		break;
-
-	case GE_CMD_VSCY:
-		if ((op & 0xFFFFFF) != 0)
-			WARN_LOG_REPORT_ONCE(vscy, G3D, "Unsupported Vertex Screen Coordinate Y : %06x", op);
-		break;
-
-	case GE_CMD_VSCZ:
-		if ((op & 0xFFFFFF) != 0)
-			WARN_LOG_REPORT_ONCE(vscz, G3D, "Unsupported Vertex Screen Coordinate Z : %06x", op);
-		break;
-
-	case GE_CMD_VTCS:
-		if ((op & 0xFFFFFF) != 0)
-			WARN_LOG_REPORT_ONCE(vtcs, G3D, "Unsupported Vertex Texture Coordinate S : %06x", op);
-		break;
-
-	case GE_CMD_VTCT:
-		if ((op & 0xFFFFFF) != 0)
-			WARN_LOG_REPORT_ONCE(vtct, G3D, "Unsupported Vertex Texture Coordinate T : %06x", op);
-		break;
-
-	case GE_CMD_VTCQ:
-		if ((op & 0xFFFFFF) != 0)
-			WARN_LOG_REPORT_ONCE(vtcq, G3D, "Unsupported Vertex Texture Coordinate Q : %06x", op);
-		break;
-
-	case GE_CMD_VCV:
-		if ((op & 0xFFFFFF) != 0)
-			WARN_LOG_REPORT_ONCE(vcv, G3D, "Unsupported Vertex Color Value : %06x", op);
-		break;
-
-	case GE_CMD_VAP:
-		if ((op & 0xFFFFFF) != 0)
-			WARN_LOG_REPORT_ONCE(vap, G3D, "Unsupported Vertex Alpha and Primitive : %06x", op);
-		break;
-
-	case GE_CMD_VFC:
-		if ((op & 0xFFFFFF) != 0)
-			WARN_LOG_REPORT_ONCE(vfc, G3D, "Unsupported Vertex Fog Coefficient : %06x", op);
-		break;
-
-	case GE_CMD_VSCV:
-		if ((op & 0xFFFFFF) != 0)
-			WARN_LOG_REPORT_ONCE(vscv, G3D, "Unsupported Vertex Secondary Color Value : %06x", op);
-		break;
-
-	case GE_CMD_UNKNOWN_03:
-	case GE_CMD_UNKNOWN_0D:
-	case GE_CMD_UNKNOWN_11:
-	case GE_CMD_UNKNOWN_29:
-	case GE_CMD_UNKNOWN_34:
-	case GE_CMD_UNKNOWN_35:
-	case GE_CMD_UNKNOWN_39:
-	case GE_CMD_UNKNOWN_4E:
-	case GE_CMD_UNKNOWN_4F:
-	case GE_CMD_UNKNOWN_52:
-	case GE_CMD_UNKNOWN_59:
-	case GE_CMD_UNKNOWN_5A:
-	case GE_CMD_UNKNOWN_B6:
-	case GE_CMD_UNKNOWN_B7:
-	case GE_CMD_UNKNOWN_D1:
-	case GE_CMD_UNKNOWN_ED:
-	case GE_CMD_UNKNOWN_EF:
-	case GE_CMD_UNKNOWN_FA:
-	case GE_CMD_UNKNOWN_FB:
-	case GE_CMD_UNKNOWN_FC:
-	case GE_CMD_UNKNOWN_FD:
-	case GE_CMD_UNKNOWN_FE:
-		if ((op & 0xFFFFFF) != 0)
-			WARN_LOG_REPORT_ONCE(unknowncmd, G3D, "Unknown GE command : %08x ", op);
-		break;
-	default:
-		break;
-	}
+	if ((op & 0xFFFFFF) != 0)
+		WARN_LOG_REPORT_ONCE(unknowncmd, G3D, "Unknown GE command : %08x ", op);
 }
 
 void GPUCommon::FastLoadBoneMatrix(u32 target) {
@@ -2028,8 +1993,6 @@ struct DisplayList_v2 {
 };
 
 void GPUCommon::DoState(PointerWrap &p) {
-	easy_guard guard(listLock);
-
 	auto s = p.Section("GPUCommon", 1, 4);
 	if (!s)
 		return;
@@ -2108,7 +2071,6 @@ void GPUCommon::InterruptStart(int listid) {
 	interruptRunning = true;
 }
 void GPUCommon::InterruptEnd(int listid) {
-	easy_guard guard(listLock);
 	interruptRunning = false;
 	isbreak = false;
 
@@ -2124,13 +2086,11 @@ void GPUCommon::InterruptEnd(int listid) {
 		__GeTriggerWait(GPU_SYNC_LIST, listid);
 	}
 
-	guard.unlock();
 	ProcessDLQueue();
 }
 
 // TODO: Maybe cleaner to keep this in GE and trigger the clear directly?
 void GPUCommon::SyncEnd(GPUSyncType waitType, int listid, bool wokeThreads) {
-	easy_guard guard(listLock);
 	if (waitType == GPU_SYNC_DRAW && wokeThreads)
 	{
 		for (int i = 0; i < DisplayListMaxCount; ++i) {
@@ -2142,7 +2102,6 @@ void GPUCommon::SyncEnd(GPUSyncType waitType, int listid, bool wokeThreads) {
 }
 
 bool GPUCommon::GetCurrentDisplayList(DisplayList &list) {
-	easy_guard guard(listLock);
 	if (!currentList) {
 		return false;
 	}
@@ -2153,7 +2112,6 @@ bool GPUCommon::GetCurrentDisplayList(DisplayList &list) {
 std::vector<DisplayList> GPUCommon::ActiveDisplayLists() {
 	std::vector<DisplayList> result;
 
-	easy_guard guard(listLock);
 	for (auto it = dlQueue.begin(), end = dlQueue.end(); it != end; ++it) {
 		result.push_back(dls[*it]);
 	}
@@ -2167,7 +2125,6 @@ void GPUCommon::ResetListPC(int listID, u32 pc) {
 		return;
 	}
 
-	easy_guard guard(listLock);
 	dls[listID].pc = pc;
 }
 
@@ -2177,7 +2134,6 @@ void GPUCommon::ResetListStall(int listID, u32 stall) {
 		return;
 	}
 
-	easy_guard guard(listLock);
 	dls[listID].stall = stall;
 }
 
@@ -2187,7 +2143,6 @@ void GPUCommon::ResetListState(int listID, DisplayListState state) {
 		return;
 	}
 
-	easy_guard guard(listLock);
 	dls[listID].state = state;
 }
 
@@ -2332,45 +2287,24 @@ void GPUCommon::DoBlockTransfer(u32 skipDrawReason) {
 
 #ifndef MOBILE_DEVICE
 	CBreakPoints::ExecMemCheck(srcBasePtr + (srcY * srcStride + srcX) * bpp, false, height * srcStride * bpp, currentMIPS->pc);
-	CBreakPoints::ExecMemCheck(dstBasePtr + (srcY * dstStride + srcX) * bpp, true, height * dstStride * bpp, currentMIPS->pc);
+	CBreakPoints::ExecMemCheck(dstBasePtr + (dstY * dstStride + dstX) * bpp, true, height * dstStride * bpp, currentMIPS->pc);
 #endif
 
 	// TODO: Correct timing appears to be 1.9, but erring a bit low since some of our other timing is inaccurate.
 	cyclesExecuted += ((height * width * bpp) * 16) / 10;
 }
 
-void GPUCommon::PerformMemoryCopyInternal(u32 dest, u32 src, int size) {
-	if (!framebufferManager_->NotifyFramebufferCopy(src, dest, size, false, gstate_c.skipDrawReason)) {
-		// We use a little hack for Download/Upload using a VRAM mirror.
-		// Since they're identical we don't need to copy.
-		if (!Memory::IsVRAMAddress(dest) || (dest ^ 0x00400000) != src) {
-			Memory::Memcpy(dest, src, size);
-		}
-	}
-	InvalidateCache(dest, size, GPU_INVALIDATE_HINT);
-}
-
-void GPUCommon::PerformMemorySetInternal(u32 dest, u8 v, int size) {
-	if (!framebufferManager_->NotifyFramebufferCopy(dest, dest, size, true, gstate_c.skipDrawReason)) {
-		InvalidateCache(dest, size, GPU_INVALIDATE_HINT);
-	}
-}
-
 bool GPUCommon::PerformMemoryCopy(u32 dest, u32 src, int size) {
 	// Track stray copies of a framebuffer in RAM. MotoGP does this.
 	if (framebufferManager_->MayIntersectFramebuffer(src) || framebufferManager_->MayIntersectFramebuffer(dest)) {
-		if (IsOnSeparateCPUThread()) {
-			GPUEvent ev(GPU_EVENT_FB_MEMCPY);
-			ev.fb_memcpy.dst = dest;
-			ev.fb_memcpy.src = src;
-			ev.fb_memcpy.size = size;
-			ScheduleEvent(ev);
-
-			// This is a memcpy, so we need to wait for it to complete.
-			SyncThread();
-		} else {
-			PerformMemoryCopyInternal(dest, src, size);
+		if (!framebufferManager_->NotifyFramebufferCopy(src, dest, size, false, gstate_c.skipDrawReason)) {
+			// We use a little hack for Download/Upload using a VRAM mirror.
+			// Since they're identical we don't need to copy.
+			if (!Memory::IsVRAMAddress(dest) || (dest ^ 0x00400000) != src) {
+				Memory::Memcpy(dest, src, size);
+			}
 		}
+		InvalidateCache(dest, size, GPU_INVALIDATE_HINT);
 		return true;
 	}
 
@@ -2383,17 +2317,8 @@ bool GPUCommon::PerformMemorySet(u32 dest, u8 v, int size) {
 	// This may indicate a memset, usually to 0, of a framebuffer.
 	if (framebufferManager_->MayIntersectFramebuffer(dest)) {
 		Memory::Memset(dest, v, size);
-
-		if (IsOnSeparateCPUThread()) {
-			GPUEvent ev(GPU_EVENT_FB_MEMSET);
-			ev.fb_memset.dst = dest;
-			ev.fb_memset.v = v;
-			ev.fb_memset.size = size;
-			ScheduleEvent(ev);
-
-			// We don't need to wait for the framebuffer to be updated.
-		} else {
-			PerformMemorySetInternal(dest, v, size);
+		if (!framebufferManager_->NotifyFramebufferCopy(dest, dest, size, true, gstate_c.skipDrawReason)) {
+			InvalidateCache(dest, size, GPU_INVALIDATE_HINT);
 		}
 		return true;
 	}
@@ -2424,14 +2349,6 @@ bool GPUCommon::PerformMemoryUpload(u32 dest, int size) {
 }
 
 void GPUCommon::InvalidateCache(u32 addr, int size, GPUInvalidationType type) {
-	GPUEvent ev(GPU_EVENT_INVALIDATE_CACHE);
-	ev.invalidate_cache.addr = addr;
-	ev.invalidate_cache.size = size;
-	ev.invalidate_cache.type = type;
-	ScheduleEvent(ev);
-}
-
-void GPUCommon::InvalidateCacheInternal(u32 addr, int size, GPUInvalidationType type) {
 	if (size > 0)
 		textureCache_->Invalidate(addr, size, type);
 	else
@@ -2456,21 +2373,10 @@ void GPUCommon::NotifyVideoUpload(u32 addr, int size, int width, int format) {
 
 bool GPUCommon::PerformStencilUpload(u32 dest, int size) {
 	if (framebufferManager_->MayIntersectFramebuffer(dest)) {
-		if (IsOnSeparateCPUThread()) {
-			GPUEvent ev(GPU_EVENT_FB_STENCIL_UPLOAD);
-			ev.fb_stencil_upload.dst = dest;
-			ev.fb_stencil_upload.size = size;
-			ScheduleEvent(ev);
-		} else {
-			PerformStencilUploadInternal(dest, size);
-		}
+		framebufferManager_->NotifyStencilUpload(dest, size);
 		return true;
 	}
 	return false;
-}
-
-void GPUCommon::PerformStencilUploadInternal(u32 dest, int size) {
-	framebufferManager_->NotifyStencilUpload(dest, size);
 }
 
 bool GPUCommon::GetCurrentFramebuffer(GPUDebugBuffer &buffer, GPUDebugFramebufferType type, int maxRes) {
@@ -2503,6 +2409,29 @@ bool GPUCommon::GetOutputFramebuffer(GPUDebugBuffer &buffer) {
 	return framebufferManager_ ? framebufferManager_->GetOutputFramebuffer(buffer) : false;
 }
 
+std::vector<FramebufferInfo> GPUCommon::GetFramebufferList() {
+	return framebufferManager_->GetFramebufferList();
+}
+
+bool GPUCommon::GetCurrentSimpleVertices(int count, std::vector<GPUDebugVertex> &vertices, std::vector<u16> &indices) {
+	return drawEngineCommon_->GetCurrentSimpleVertices(count, vertices, indices);
+}
+
+bool GPUCommon::GetCurrentClut(GPUDebugBuffer &buffer) {
+	return textureCache_->GetCurrentClutBuffer(buffer);
+}
+
 bool GPUCommon::GetCurrentTexture(GPUDebugBuffer &buffer, int level) {
+	if (!gstate.isTextureMapEnabled()) {
+		return false;
+	}
 	return textureCache_->GetCurrentTextureDebug(buffer, level);
+}
+
+bool GPUCommon::DescribeCodePtr(const u8 *ptr, std::string &name) {
+	if (drawEngineCommon_->IsCodePtrVertexDecoder(ptr)) {
+		name = "VertexDecoderJit";
+		return true;
+	}
+	return false;
 }

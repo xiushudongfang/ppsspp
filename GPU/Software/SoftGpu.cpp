@@ -28,6 +28,7 @@
 #include "Core/HLE/sceGe.h"
 #include "Core/MIPS/MIPS.h"
 #include "Core/Reporting.h"
+#include "Core/Core.h"
 #include "profiler/profiler.h"
 #include "thin3d/thin3d.h"
 
@@ -146,13 +147,6 @@ void SoftGPU::SetDisplayFramebuffer(u32 framebuf, u32 stride, GEBufferFormat for
 void SoftGPU::CopyToCurrentFboFromDisplayRam(int srcwidth, int srcheight) {
 	if (!draw_)
 		return;
-	float dstwidth = (float)PSP_CoreParameter().pixelWidth;
-	float dstheight = (float)PSP_CoreParameter().pixelHeight;
-
-	Draw::Viewport viewport = {0.0f, 0.0f, dstwidth, dstheight, 0.0f, 1.0f};
-	draw_->SetViewports(1, &viewport);
-	draw_->SetScissorRect(0, 0, dstwidth, dstheight);
-
 	float u0 = 0.0f;
 	float u1;
 
@@ -161,22 +155,31 @@ void SoftGPU::CopyToCurrentFboFromDisplayRam(int srcwidth, int srcheight) {
 		fbTex = nullptr;
 	}
 
+	// For accuracy, try to handle 0 stride - sometimes used.
+	if (displayStride_ == 0) {
+		srcheight = 1;
+	}
+
 	Draw::TextureDesc desc{};
 	desc.type = Draw::TextureType::LINEAR2D;
 	desc.format = Draw::DataFormat::R8G8B8A8_UNORM;
 	desc.depth = 1;
 	desc.mipLevels = 1;
 	bool hasImage = true;
-	if (!Memory::IsValidAddress(displayFramebuf_)) {
+	if (!Memory::IsValidAddress(displayFramebuf_) || srcwidth == 0 || srcheight == 0) {
 		hasImage = false;
 		u1 = 1.0f;
 	} else if (displayFormat_ == GE_FORMAT_8888) {
 		u8 *data = Memory::GetPointer(displayFramebuf_);
-		desc.width = displayStride_;
+		desc.width = displayStride_ == 0 ? srcwidth : displayStride_;
 		desc.height = srcheight;
 		desc.initData.push_back(data);
 		desc.format = Draw::DataFormat::R8G8B8A8_UNORM;
-		u1 = (float)srcwidth / displayStride_;
+		if (displayStride_ != 0) {
+			u1 = (float)srcwidth / displayStride_;
+		} else {
+			u1 = 1.0f;
+		}
 	} else {
 		// TODO: This should probably be converted in a shader instead..
 		fbTexBuffer.resize(srcwidth * srcheight);
@@ -216,6 +219,9 @@ void SoftGPU::CopyToCurrentFboFromDisplayRam(int srcwidth, int srcheight) {
 
 	fbTex = draw_->CreateTexture(desc);
 
+	float dstwidth = (float)PSP_CoreParameter().pixelWidth;
+	float dstheight = (float)PSP_CoreParameter().pixelHeight;
+
 	float x, y, w, h;
 	CenterDisplayOutputRect(&x, &y, &w, &h, 480.0f, 272.0f, dstwidth, dstheight, ROTATION_LOCKED_HORIZONTAL);
 
@@ -242,6 +248,9 @@ void SoftGPU::CopyToCurrentFboFromDisplayRam(int srcwidth, int srcheight) {
 		std::swap(v0, v1);
 	}
 	draw_->BindFramebufferAsRenderTarget(nullptr, { Draw::RPAction::CLEAR, Draw::RPAction::DONT_CARE });
+	Draw::Viewport viewport = { 0.0f, 0.0f, dstwidth, dstheight, 0.0f, 1.0f };
+	draw_->SetViewports(1, &viewport);
+	draw_->SetScissorRect(0, 0, dstwidth, dstheight);
 
 	Draw::SamplerState *sampler;
 	if (g_Config.iBufFilter == SCALE_NEAREST) {
@@ -281,13 +290,7 @@ void SoftGPU::CopyToCurrentFboFromDisplayRam(int srcwidth, int srcheight) {
 	draw_->BindIndexBuffer(nullptr, 0);
 }
 
-void SoftGPU::CopyDisplayToOutput()
-{
-	ScheduleEvent(GPU_EVENT_COPY_DISPLAY_TO_OUTPUT);
-}
-
-void SoftGPU::CopyDisplayToOutputInternal()
-{
+void SoftGPU::CopyDisplayToOutput() {
 	// The display always shows 480x272.
 	CopyToCurrentFboFromDisplayRam(FB_WIDTH, FB_HEIGHT);
 	framebufferDirty_ = false;
@@ -299,17 +302,6 @@ void SoftGPU::CopyDisplayToOutputInternal()
 	} else {
 		PSP_CoreParameter().renderWidth = 480;
 		PSP_CoreParameter().renderHeight = 272;
-	}
-}
-
-void SoftGPU::ProcessEvent(GPUEvent ev) {
-	switch (ev.type) {
-	case GPU_EVENT_COPY_DISPLAY_TO_OUTPUT:
-		CopyDisplayToOutputInternal();
-		break;
-
-	default:
-		GPUCommon::ProcessEvent(ev);
 	}
 }
 
@@ -403,11 +395,8 @@ void SoftGPU::ExecuteOp(u32 op, u32 diff) {
 				indices = Memory::GetPointerUnchecked(gstate_c.indexAddr);
 			}
 
-			if (gstate.vertType & GE_VTYPE_MORPHCOUNT_MASK) {
-				DEBUG_LOG_REPORT(G3D, "Bezier + morph: %i", (gstate.vertType & GE_VTYPE_MORPHCOUNT_MASK) >> GE_VTYPE_MORPHCOUNT_SHIFT);
-			}
-			if (vertTypeIsSkinningEnabled(gstate.vertType)) {
-				DEBUG_LOG_REPORT(G3D, "Bezier + skinning: %i", vertTypeGetNumBoneWeights(gstate.vertType));
+			if ((gstate.vertType & GE_VTYPE_MORPHCOUNT_MASK) || vertTypeIsSkinningEnabled(gstate.vertType)) {
+				DEBUG_LOG_REPORT(G3D, "Unusual bezier/spline vtype: %08x, morph: %d, bones: %d", gstate.vertType, (gstate.vertType & GE_VTYPE_MORPHCOUNT_MASK) >> GE_VTYPE_MORPHCOUNT_SHIFT, vertTypeGetNumBoneWeights(gstate.vertType));
 			}
 
 			GEPatchPrimType patchPrim = gstate.getPatchPrimitiveType();
@@ -482,10 +471,33 @@ void SoftGPU::ExecuteOp(u32 op, u32 diff) {
 		break;
 
 	case GE_CMD_BOUNDINGBOX:
-		if (data != 0)
+		if (data == 0) {
+			currentList->bboxResult = false;
+		} else if (((data & 7) == 0) && data <= 64) {  // Sanity check
 			DEBUG_LOG(G3D, "Unsupported bounding box: %06x", data);
-		// bounding box test. Let's assume the box was within the drawing region.
-		currentList->bboxResult = true;
+			void *control_points = Memory::GetPointer(gstate_c.vertexAddr);
+			if (!control_points) {
+				ERROR_LOG_REPORT_ONCE(boundingbox, G3D, "Invalid verts in bounding box check");
+				currentList->bboxResult = true;
+				return;
+			}
+
+			if (gstate.vertType & GE_VTYPE_IDX_MASK) {
+				ERROR_LOG_REPORT_ONCE(boundingbox, G3D, "Indexed bounding box data not supported.");
+				// Data seems invalid. Let's assume the box test passed.
+				currentList->bboxResult = true;
+				return;
+			}
+
+			// Test if the bounding box is within the drawing region.
+			int bytesRead;
+			currentList->bboxResult = drawEngineCommon_->TestBoundingBox(control_points, data, gstate.vertType, &bytesRead);
+			AdvanceVerts(gstate.vertType, data, bytesRead);
+		} else {
+			ERROR_LOG_REPORT_ONCE(boundingbox, G3D, "Bad bounding box data: %06x", data);
+			// Data seems invalid. Let's assume the box test passed.
+			currentList->bboxResult = true;
+		}
 		break;
 
 	case GE_CMD_VERTEXTYPE:
@@ -914,11 +926,6 @@ bool SoftGPU::PerformStencilUpload(u32 dest, int size)
 }
 
 bool SoftGPU::FramebufferDirty() {
-	if (g_Config.bSeparateCPUThread) {
-		// Allow it to process fully before deciding if it's dirty.
-		SyncThread();
-	}
-
 	if (g_Config.iFrameSkip != 0) {
 		bool dirty = framebufferDirty_;
 		framebufferDirty_ = false;

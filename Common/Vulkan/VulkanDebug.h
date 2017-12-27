@@ -1,4 +1,4 @@
-// Copyright (c) 2012- PPSSPP Project.
+// Copyright (c) 2016- PPSSPP Project.
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,15 +15,14 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#pragma once
 
-#include "Globals.h"
-#include "MsgHandler.h"
+#include "Common/Vulkan/VulkanContext.h"
 
-#ifdef _WIN32
-#include "Common/CommonWindows.h"
+struct VulkanLogOptions {
+	bool breakOnWarning;
+	bool breakOnError;
+	bool msgBoxOnError;
+};
 
-// Globals
-HMENU g_hPopupMenus;
-int g_activeWindow = 0;
-#endif
-
+VkBool32 VKAPI_CALL Vulkan_Dbg(VkDebugReportFlagsEXT msgFlags, VkDebugReportObjectTypeEXT objType, uint64_t srcObject, size_t location, int32_t msgCode, const char* pLayerPrefix, const char* pMsg, void *pUserData);

@@ -37,7 +37,7 @@
 class PointerWrap;
 
 // Net stuff
-#if defined(_MSC_VER)
+#if defined(_WIN32)
 #include <WS2tcpip.h>
 #else
 #include <unistd.h>
@@ -50,8 +50,14 @@ class PointerWrap;
 #include <fcntl.h>
 #include <errno.h>
 #endif
+
 #ifdef _MSC_VER
-#define PACK
+#define PACK  // on MSVC we use #pragma pack() instead so let's kill this.
+#else
+#define PACK __attribute__((packed))
+#endif
+
+#ifdef _WIN32
 #undef errno
 #undef ECONNABORTED
 #undef ECONNRESET
@@ -73,7 +79,6 @@ inline bool connectInProgress(int errcode){ return (errcode == WSAEWOULDBLOCK ||
 #define INVALID_SOCKET -1
 #define SOCKET_ERROR -1
 #define closesocket close
-#define PACK __attribute__((packed))
 inline bool connectInProgress(int errcode){ return (errcode == EINPROGRESS || errcode == EALREADY); }
 #endif
 

@@ -132,7 +132,6 @@ DrawEngineGLES::DrawEngineGLES() : vai_(256) {
 	indexGen.Setup(decIndex);
 
 	InitDeviceObjects();
-	register_gl_resource_holder(this, "drawengine_gles", 1);
 
 	tessDataTransfer = new TessellationDataTransferGLES(gl_extensions.VersionGEThan(3, 0, 0));
 }
@@ -142,8 +141,6 @@ DrawEngineGLES::~DrawEngineGLES() {
 	FreeMemoryPages(decoded, DECODED_VERTEX_BUFFER_SIZE);
 	FreeMemoryPages(decIndex, DECODED_INDEX_BUFFER_SIZE);
 	FreeMemoryPages(splineBuffer, SPLINE_BUFFER_SIZE);
-
-	unregister_gl_resource_holder(this);
 
 	delete tessDataTransfer;
 }
@@ -157,6 +154,14 @@ void DrawEngineGLES::RestoreVAO() {
 		glGenVertexArrays(1, &sharedVao_);
 		glBindVertexArray(sharedVao_);
 	}
+}
+
+void DrawEngineGLES::DeviceLost() {
+	DestroyDeviceObjects();
+}
+
+void DrawEngineGLES::DeviceRestore() {
+	InitDeviceObjects();
 }
 
 void DrawEngineGLES::InitDeviceObjects() {
@@ -191,21 +196,6 @@ void DrawEngineGLES::DestroyDeviceObjects() {
 	}
 }
 
-void DrawEngineGLES::GLLost() {
-	ILOG("TransformDrawEngine::GLLost()");
-	// The objects have already been deleted by losing the context, so we don't call DestroyDeviceObjects.
-	bufferNameCache_.clear();
-	bufferNameInfo_.clear();
-	freeSizedBuffers_.clear();
-	bufferNameCacheSize_ = 0;
-	ClearTrackedVertexArrays();
-}
-
-void DrawEngineGLES::GLRestore() {
-	ILOG("TransformDrawEngine::GLRestore()");
-	InitDeviceObjects();
-}
-
 struct GlTypeInfo {
 	u16 type;
 	u8 count;
@@ -228,8 +218,6 @@ static const GlTypeInfo GLComp[] = {
 	{GL_UNSIGNED_SHORT, 2, GL_TRUE},// 	DEC_U16_2,
 	{GL_UNSIGNED_SHORT, 3, GL_TRUE},// 	DEC_U16_3,
 	{GL_UNSIGNED_SHORT, 4, GL_TRUE},// 	DEC_U16_4,
-	{GL_UNSIGNED_BYTE,  2, GL_FALSE},// 	DEC_U8A_2,
-	{GL_UNSIGNED_SHORT, 2, GL_FALSE},// 	DEC_U16A_2,
 };
 
 static inline void VertexAttribSetup(int attrib, int fmt, int stride, u8 *ptr) {
@@ -313,21 +301,6 @@ void DrawEngineGLES::SubmitPrim(void *verts, void *inds, GEPrimitiveType prim, i
 			gstate_c.Dirty(DIRTY_TEXTURE_PARAMS);
 			Flush();
 		}
-	}
-}
-
-void DrawEngineGLES::DecodeVerts() {
-	const UVScale origUV = gstate_c.uv;
-	for (; decodeCounter_ < numDrawCalls; decodeCounter_++) {
-		gstate_c.uv = uvScale[decodeCounter_];
-		DecodeVertsStep(decoded, decodeCounter_, decodedVerts_);
-	}
-	gstate_c.uv = origUV;
-	// Sanity check
-	if (indexGen.Prim() < 0) {
-		ERROR_LOG_REPORT(G3D, "DecodeVerts: Failed to deduce prim: %i", indexGen.Prim());
-		// Force to points (0)
-		indexGen.AddPrim(GE_PRIM_POINTS, 0);
 	}
 }
 
@@ -466,7 +439,7 @@ void DrawEngineGLES::DoFlush() {
 	ApplyDrawState(prim);
 	CHECK_GL_ERROR_IF_DEBUG();
 
-	ShaderID vsid;
+	VShaderID vsid;
 	Shader *vshader = shaderManager_->ApplyVertexShader(prim, lastVType_, &vsid);
 
 	if (vshader->UseHWTransform()) {
@@ -497,7 +470,7 @@ void DrawEngineGLES::DoFlush() {
 					vai->minihash = ComputeMiniHash();
 					vai->status = VertexArrayInfo::VAI_HASHING;
 					vai->drawsUntilNextFullHash = 0;
-					DecodeVerts(); // writes to indexGen
+					DecodeVerts(decoded); // writes to indexGen
 					vai->numVerts = indexGen.VertexCount();
 					vai->prim = indexGen.Prim();
 					vai->maxIndex = indexGen.MaxIndex();
@@ -523,7 +496,7 @@ void DrawEngineGLES::DoFlush() {
 						}
 						if (newMiniHash != vai->minihash || newHash != vai->hash) {
 							MarkUnreliable(vai);
-							DecodeVerts();
+							DecodeVerts(decoded);
 							goto rotateVBO;
 						}
 						if (vai->numVerts > 64) {
@@ -542,13 +515,13 @@ void DrawEngineGLES::DoFlush() {
 						u32 newMiniHash = ComputeMiniHash();
 						if (newMiniHash != vai->minihash) {
 							MarkUnreliable(vai);
-							DecodeVerts();
+							DecodeVerts(decoded);
 							goto rotateVBO;
 						}
 					}
 
 					if (vai->vbo == 0) {
-						DecodeVerts();
+						DecodeVerts(decoded);
 						vai->numVerts = indexGen.VertexCount();
 						vai->prim = indexGen.Prim();
 						vai->maxIndex = indexGen.MaxIndex();
@@ -617,14 +590,14 @@ void DrawEngineGLES::DoFlush() {
 					if (vai->lastFrame != gpuStats.numFlips) {
 						vai->numFrames++;
 					}
-					DecodeVerts();
+					DecodeVerts(decoded);
 					goto rotateVBO;
 				}
 			}
 
 			vai->lastFrame = gpuStats.numFlips;
 		} else {
-			DecodeVerts();
+			DecodeVerts(decoded);
 
 rotateVBO:
 			gpuStats.numUncachedVertsDrawn += indexGen.VertexCount();
@@ -669,7 +642,7 @@ rotateVBO:
 			glDrawArrays(glprim[prim], 0, vertexCount);
 		}
 	} else {
-		DecodeVerts();
+		DecodeVerts(decoded);
 		bool hasColor = (lastVType_ & GE_VTYPE_COL_MASK) != GE_VTYPE_COL_NONE;
 		if (gstate.isModeThrough()) {
 			gstate_c.vertexFullAlpha = gstate_c.vertexFullAlpha && (hasColor || gstate.getMaterialAmbientA() == 255);
@@ -687,22 +660,27 @@ rotateVBO:
 		int numTrans;
 		bool drawIndexed = false;
 		u16 *inds = decIndex;
-		SoftwareTransformResult result;
-		memset(&result, 0, sizeof(result));
-
+		SoftwareTransformResult result{};
 		// TODO: Keep this static?  Faster than repopulating?
-		SoftwareTransformParams params;
-		memset(&params, 0, sizeof(params));
+		SoftwareTransformParams params{};
 		params.decoded = decoded;
 		params.transformed = transformed;
 		params.transformedExpanded = transformedExpanded;
 		params.fbman = framebufferManager_;
 		params.texCache = textureCache_;
+		params.allowClear = true;
 		params.allowSeparateAlphaClear = true;
 
 		int maxIndex = indexGen.MaxIndex();
+		int vertexCount = indexGen.VertexCount();
+
+		// TODO: Split up into multiple draw calls for GLES 2.0 where you can't guarantee support for more than 0x10000 verts.
+#if defined(MOBILE_DEVICE)
+		if (vertexCount > 0x10000 / 3)
+			vertexCount = 0x10000 / 3;
+#endif
 		SoftwareTransform(
-			prim, indexGen.VertexCount(),
+			prim, vertexCount,
 			dec_->VertexType(), inds, GE_VTYPE_IDX_16BIT, dec_->GetDecVtxFmt(),
 			maxIndex, drawBuffer, numTrans, drawIndexed, &params, &result);
 		ApplyDrawStateLate();

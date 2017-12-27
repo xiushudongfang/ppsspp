@@ -83,7 +83,7 @@ TextDrawerWin32::~TextDrawerWin32() {
 }
 
 uint32_t TextDrawerWin32::SetFont(const char *fontName, int size, int flags) {
-	uint32_t fontHash = fontName ? hash::Fletcher((const uint8_t *)fontName, strlen(fontName)) : 0;
+	uint32_t fontHash = fontName ? hash::Adler32((const uint8_t *)fontName, strlen(fontName)) : 0;
 	fontHash ^= size;
 	fontHash ^= flags << 10;
 
@@ -119,11 +119,10 @@ void TextDrawerWin32::SetFont(uint32_t fontHandle) {
 }
 
 void TextDrawerWin32::MeasureString(const char *str, size_t len, float *w, float *h) {
-	uint32_t stringHash = hash::Fletcher((const uint8_t *)str, len);
-	uint32_t entryHash = stringHash ^ fontHash_;
-
+	CacheKey key{ std::string(str, len), fontHash_ };
+	
 	TextMeasureEntry *entry;
-	auto iter = sizeCache_.find(entryHash);
+	auto iter = sizeCache_.find(key);
 	if (iter != sizeCache_.end()) {
 		entry = iter->second.get();
 	} else {
@@ -133,13 +132,13 @@ void TextDrawerWin32::MeasureString(const char *str, size_t len, float *w, float
 		}
 
 		SIZE size;
-		std::wstring wstr = ConvertUTF8ToWString(ReplaceAll(std::string(str, len), "\n", "\r\n"));
+		std::wstring wstr = ConvertUTF8ToWString(ReplaceAll(ReplaceAll(std::string(str, len), "\n", "\r\n"), "&&", "&"));
 		GetTextExtentPoint32(ctx_->hDC, wstr.c_str(), (int)wstr.size(), &size);
 
 		entry = new TextMeasureEntry();
 		entry->width = size.cx;
 		entry->height = size.cy;
-		sizeCache_[entryHash] = std::unique_ptr<TextMeasureEntry>(entry);
+		sizeCache_[key] = std::unique_ptr<TextMeasureEntry>(entry);
 	}
 
 	entry->lastUsedFrame = frameCount_;
@@ -164,22 +163,21 @@ void TextDrawerWin32::MeasureStringRect(const char *str, size_t len, const Bound
 	float total_w = 0.0f;
 	float total_h = 0.0f;
 	for (size_t i = 0; i < lines.size(); i++) {
-		uint32_t stringHash = hash::Fletcher((const uint8_t *)&lines[i][0], lines[i].length());
-		uint32_t entryHash = stringHash ^ fontHash_;
+		CacheKey key{ lines[i], fontHash_ };
 
 		TextMeasureEntry *entry;
-		auto iter = sizeCache_.find(entryHash);
+		auto iter = sizeCache_.find(key);
 		if (iter != sizeCache_.end()) {
 			entry = iter->second.get();
 		} else {
 			SIZE size;
-			std::wstring wstr = ConvertUTF8ToWString(lines[i].length() == 0 ? " " : lines[i]);
+			std::wstring wstr = ConvertUTF8ToWString(lines[i].length() == 0 ? " " : ReplaceAll(lines[i], "&&", "&"));
 			GetTextExtentPoint32(ctx_->hDC, wstr.c_str(), (int)wstr.size(), &size);
 
 			entry = new TextMeasureEntry();
 			entry->width = size.cx;
 			entry->height = size.cy;
-			sizeCache_[entryHash] = std::unique_ptr<TextMeasureEntry>(entry);
+			sizeCache_[key] = std::unique_ptr<TextMeasureEntry>(entry);
 		}
 		entry->lastUsedFrame = frameCount_;
 
@@ -197,14 +195,13 @@ void TextDrawerWin32::DrawString(DrawBuffer &target, const char *str, float x, f
 	if (!strlen(str))
 		return;
 
-	uint32_t stringHash = hash::Fletcher((const uint8_t *)str, strlen(str));
-	uint32_t entryHash = stringHash ^ fontHash_ ^ (align << 24);
+	CacheKey key{ std::string(str), fontHash_ };
 
 	target.Flush(true);
 
 	TextStringEntry *entry;
 
-	auto iter = cache_.find(entryHash);
+	auto iter = cache_.find(key);
 	if (iter != cache_.end()) {
 		entry = iter->second.get();
 		entry->lastUsedFrame = frameCount_;
@@ -230,14 +227,6 @@ void TextDrawerWin32::DrawString(DrawBuffer &target, const char *str, float x, f
 		size.cx = textRect.right;
 		size.cy = textRect.bottom;
 
-		// GetTextExtentPoint32(ctx_->hDC, wstr.c_str(), (int)wstr.size(), &size);
-		RECT rc = { 0 };
-		rc.right = size.cx + 4;
-		rc.bottom = size.cy + 4;
-		FillRect(ctx_->hDC, &rc, (HBRUSH)GetStockObject(BLACK_BRUSH));
-		//ExtTextOut(ctx_->hDC, 0, 0, ETO_OPAQUE | ETO_CLIPPED, NULL, wstr.c_str(), (int)wstr.size(), NULL);
-		DrawTextExW(ctx_->hDC, (LPWSTR)wstr.c_str(), (int)wstr.size(), &rc, DT_HIDEPREFIX | DT_TOP | dtAlign, 0);
-
 		if (size.cx > MAX_TEXT_WIDTH)
 			size.cx = MAX_TEXT_WIDTH;
 		if (size.cy > MAX_TEXT_HEIGHT)
@@ -249,6 +238,12 @@ void TextDrawerWin32::DrawString(DrawBuffer &target, const char *str, float x, f
 		entry->bmWidth = (size.cx + 3) & ~3;
 		entry->bmHeight = (size.cy + 3) & ~3;
 		entry->lastUsedFrame = frameCount_;
+
+		RECT rc = { 0 };
+		rc.right = entry->bmWidth;
+		rc.bottom = entry->bmHeight;
+		FillRect(ctx_->hDC, &rc, (HBRUSH)GetStockObject(BLACK_BRUSH));
+		DrawTextExW(ctx_->hDC, (LPWSTR)wstr.c_str(), (int)wstr.size(), &rc, DT_HIDEPREFIX | DT_TOP | dtAlign, 0);
 
 		DataFormat texFormat;
 		// For our purposes these are equivalent, so just choose the supported one. D3D can emulate them.
@@ -304,16 +299,18 @@ void TextDrawerWin32::DrawString(DrawBuffer &target, const char *str, float x, f
 			delete[] bitmapData16;
 		if (bitmapData32)
 			delete[] bitmapData32;
-		cache_[entryHash] = std::unique_ptr<TextStringEntry>(entry);
+		cache_[key] = std::unique_ptr<TextStringEntry>(entry);
 	}
 
 	draw_->BindTexture(0, entry->texture);
 
 	// Okay, the texture is bound, let's draw.
-	float w = entry->bmWidth * fontScaleX_ * dpiScale_;
-	float h = entry->bmHeight * fontScaleY_ * dpiScale_;
+	float w = entry->width * fontScaleX_ * dpiScale_;
+	float h = entry->height * fontScaleY_ * dpiScale_;
+	float u = entry->width / (float)entry->bmWidth;
+	float v = entry->height / (float)entry->bmHeight;
 	DrawBuffer::DoAlign(align, &x, &y, &w, &h);
-	target.DrawTexRect(x, y, x + w, y + h, 0.0f, 0.0f, 1.0f, 1.0f, color);
+	target.DrawTexRect(x, y, x + w, y + h, 0.0f, 0.0f, u, v, color);
 	target.Flush(true);
 }
 

@@ -21,12 +21,15 @@
 #include <vector>
 
 #include "Common/ColorConv.h"
+#include "Core/Config.h"
+#include "Core/Screenshot.h"
 #include "Windows/GEDebugger/GEDebugger.h"
 #include "Windows/GEDebugger/SimpleGLWindow.h"
 #include "Windows/GEDebugger/CtrlDisplayListView.h"
 #include "Windows/GEDebugger/TabDisplayLists.h"
 #include "Windows/GEDebugger/TabState.h"
 #include "Windows/GEDebugger/TabVertices.h"
+#include "Windows/W32Util/ShellUtil.h"
 #include "Windows/InputBox.h"
 #include "Windows/WindowsHost.h"
 #include "Windows/MainWindow.h"
@@ -38,9 +41,10 @@
 #include "GPU/Debugger/Breakpoints.h"
 #include "GPU/Debugger/Record.h"
 #include "GPU/Debugger/Stepping.h"
-#include "Core/Config.h"
 #include <windowsx.h>
 #include <commctrl.h>
+
+const int POPUP_SUBMENU_ID_GEDBG_PREVIEW = 10;
 
 using namespace GPUBreakpoints;
 using namespace GPUStepping;
@@ -61,8 +65,7 @@ void CGEDebugger::Init() {
 }
 
 CGEDebugger::CGEDebugger(HINSTANCE _hInstance, HWND _hParent)
-	: Dialog((LPCSTR)IDD_GEDEBUGGER, _hInstance, _hParent), primaryWindow(nullptr), secondWindow(nullptr),
-	  textureLevel_(0), showClut_(false), primaryBuffer_(nullptr), secondBuffer_(nullptr) {
+	: Dialog((LPCSTR)IDD_GEDEBUGGER, _hInstance, _hParent) {
 	GPUBreakpoints::Init();
 	Core_ListenShutdown(ForceUnpause);
 
@@ -146,18 +149,66 @@ CGEDebugger::~CGEDebugger() {
 
 void CGEDebugger::SetupPreviews() {
 	if (primaryWindow == nullptr) {
+		HMENU subMenu = GetSubMenu(g_hPopupMenus, POPUP_SUBMENU_ID_GEDBG_PREVIEW);
+
 		primaryWindow = SimpleGLWindow::GetFrom(GetDlgItem(m_hDlg, IDC_GEDBG_FRAME));
 		primaryWindow->Initialize(SimpleGLWindow::ALPHA_IGNORE | SimpleGLWindow::RESIZE_SHRINK_CENTER);
 		primaryWindow->SetHoverCallback([&] (int x, int y) {
 			PrimaryPreviewHover(x, y);
 		});
+		primaryWindow->SetRightClickMenu(subMenu, [&] (int cmd) {
+			HMENU subMenu = GetSubMenu(g_hPopupMenus, POPUP_SUBMENU_ID_GEDBG_PREVIEW);
+			switch (cmd) {
+			case 0:
+				// Setup.
+				CheckMenuItem(subMenu, ID_GEDBG_ENABLE_PREVIEW, MF_BYCOMMAND | ((previewsEnabled_ & 1) ? MF_CHECKED : MF_UNCHECKED));
+				break;
+			case ID_GEDBG_EXPORT_IMAGE:
+				PreviewExport(primaryBuffer_);
+				break;
+			case ID_GEDBG_ENABLE_PREVIEW:
+				previewsEnabled_ ^= 1;
+				primaryWindow->Redraw();
+			default:
+				break;
+			}
+
+			return true;
+		});
+		primaryWindow->SetRedrawCallback([&] {
+			HandleRedraw(1);
+		});
 		primaryWindow->Clear();
 	}
 	if (secondWindow == nullptr) {
+		HMENU subMenu = GetSubMenu(g_hPopupMenus, POPUP_SUBMENU_ID_GEDBG_PREVIEW);
+
 		secondWindow = SimpleGLWindow::GetFrom(GetDlgItem(m_hDlg, IDC_GEDBG_TEX));
 		secondWindow->Initialize(SimpleGLWindow::ALPHA_BLEND | SimpleGLWindow::RESIZE_SHRINK_CENTER);
 		secondWindow->SetHoverCallback([&] (int x, int y) {
 			SecondPreviewHover(x, y);
+		});
+		secondWindow->SetRightClickMenu(subMenu, [&] (int cmd) {
+			HMENU subMenu = GetSubMenu(g_hPopupMenus, POPUP_SUBMENU_ID_GEDBG_PREVIEW);
+			switch (cmd) {
+			case 0:
+				// Setup.
+				CheckMenuItem(subMenu, ID_GEDBG_ENABLE_PREVIEW, MF_BYCOMMAND | ((previewsEnabled_ & 2) ? MF_CHECKED : MF_UNCHECKED));
+				break;
+			case ID_GEDBG_EXPORT_IMAGE:
+				PreviewExport(secondBuffer_);
+				break;
+			case ID_GEDBG_ENABLE_PREVIEW:
+				previewsEnabled_ ^= 2;
+				secondWindow->Redraw();
+			default:
+				break;
+			}
+
+			return true;
+		});
+		secondWindow->SetRedrawCallback([&] {
+			HandleRedraw(2);
 		});
 		secondWindow->Clear();
 	}
@@ -195,6 +246,28 @@ void CGEDebugger::DescribeSecondPreview(const GPUgstate &state, wchar_t desc[256
 	}
 }
 
+void CGEDebugger::PreviewExport(const GPUDebugBuffer *dbgBuffer) {
+	const TCHAR *filter = L"PNG Image (*.png)\0*.png\0JPEG Image (*.jpg)\0*.jpg\0All files\0*.*\0\0";
+	std::string fn;
+	if (W32Util::BrowseForFileName(false, GetDlgHandle(), L"Save Preview Image...", nullptr, filter, L"png", fn)) {
+		ScreenshotFormat fmt = fn.find(".jpg") != fn.npos ? ScreenshotFormat::JPG : ScreenshotFormat::PNG;
+		bool saveAlpha = fmt == ScreenshotFormat::PNG;
+
+		u8 *flipbuffer = nullptr;
+		u32 w = (u32)-1;
+		u32 h = (u32)-1;
+		const u8 *buffer = ConvertBufferToScreenshot(*dbgBuffer, saveAlpha, flipbuffer, w, h);
+		if (buffer != nullptr) {
+			if (saveAlpha) {
+				Save8888RGBAScreenshot(fn.c_str(), buffer, w, h);
+			} else {
+				Save888RGBScreenshot(fn.c_str(), fmt, buffer, w, h);
+			}
+		}
+		delete [] flipbuffer;
+	}
+}
+
 void CGEDebugger::UpdatePreviews() {
 	auto memLock = Memory::Lock();
 	if (!PSP_IsInited()) {
@@ -207,19 +280,18 @@ void CGEDebugger::UpdatePreviews() {
 		state = gpuDebug->GetGState();
 	}
 
+	updating_ = true;
 	UpdateTextureLevel(textureLevel_);
 	UpdatePrimaryPreview(state);
 	UpdateSecondPreview(state);
 
+	u32 primOp = PrimPreviewOp();
+	if (primOp != 0) {
+		UpdatePrimPreview(primOp, 3);
+	}
+
 	DisplayList list;
 	if (gpuDebug != nullptr && gpuDebug->GetCurrentDisplayList(list)) {
-		const u32 op = Memory::Read_U32(list.pc);
-		const u32 cmd = op >> 24;
-		// TODO: Bezier/spline?
-		if (cmd == GE_CMD_PRIM && !showClut_) {
-			UpdatePrimPreview(op);
-		}
-
 		displayList->setDisplayList(list);
 	}
 
@@ -231,6 +303,7 @@ void CGEDebugger::UpdatePreviews() {
 	matrices->Update();
 	lists->Update();
 	watch->Update();
+	updating_ = false;
 }
 
 u32 CGEDebugger::TexturePreviewFlags(const GPUgstate &state) {

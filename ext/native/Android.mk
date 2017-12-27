@@ -9,7 +9,6 @@ LOCAL_ARM_MODE := arm
 LOCAL_SRC_FILES :=\
     base/backtrace.cpp \
     base/buffer.cpp \
-    base/compat.cpp \
     base/display.cpp \
     base/timeutil.cpp \
     base/colorutil.cpp \
@@ -78,7 +77,6 @@ LOCAL_SRC_FILES :=\
     gfx_es2/draw_text_android.cpp.arm \
     gfx/GLStateCache.cpp.arm \
     gfx/gl_debug_log.cpp \
-    gfx/gl_lost_manager.cpp \
     gfx/texture_atlas.cpp \
     image/zim_load.cpp \
     image/zim_save.cpp \
@@ -86,10 +84,13 @@ LOCAL_SRC_FILES :=\
     thin3d/thin3d.cpp \
     thin3d/thin3d_gl.cpp \
     thin3d/thin3d_vulkan.cpp \
+    thin3d/VulkanRenderManager.cpp \
+    thin3d/VulkanQueueRunner.cpp \
     ui/view.cpp \
     ui/viewgroup.cpp \
     ui/ui.cpp \
     ui/ui_screen.cpp \
+    ui/ui_tween.cpp \
     ui/ui_context.cpp \
     ui/screen.cpp \
     util/text/utf8.cpp \

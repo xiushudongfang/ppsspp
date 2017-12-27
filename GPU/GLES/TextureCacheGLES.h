@@ -21,7 +21,6 @@
 
 #include "gfx_es2/gpu_features.h"
 #include "gfx/gl_common.h"
-#include "Globals.h"
 #include "GPU/GPUInterface.h"
 #include "GPU/GPUState.h"
 #include "GPU/GLES/TextureScalerGLES.h"
@@ -68,6 +67,9 @@ public:
 	bool DecodeTexture(u8 *output, const GPUgstate &state);
 
 	void SetFramebufferSamplingParams(u16 bufferWidth, u16 bufferHeight);
+	bool GetCurrentTextureDebug(GPUDebugBuffer &buffer, int level) override;
+
+	void DeviceRestore(Draw::DrawContext *draw);
 
 protected:
 	void BindTexture(TexCacheEntry *entry) override;
@@ -79,7 +81,7 @@ private:
 	void LoadTextureLevel(TexCacheEntry &entry, ReplacedTexture &replaced, int level, bool replaceImages, int scaleFactor, GLenum dstFmt);
 	GLenum GetDestFormat(GETextureFormat format, GEPaletteFormat clutFormat) const;
 	void *DecodeTextureLevelOld(GETextureFormat format, GEPaletteFormat clutformat, int level, GLenum dstFmt, int scaleFactor, int *bufw = 0);
-	TexCacheEntry::Status CheckAlpha(const u32 *pixelData, GLenum dstFmt, int stride, int w, int h);
+	TexCacheEntry::TexStatus CheckAlpha(const u32 *pixelData, GLenum dstFmt, int stride, int w, int h);
 	void UpdateCurrentClut(GEPaletteFormat clutFormat, u32 clutBase, bool clutIndexIsSimple) override;
 	void ApplyTextureFramebuffer(TexCacheEntry *entry, VirtualFramebuffer *framebuffer) override;
 

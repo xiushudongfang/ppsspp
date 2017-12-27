@@ -40,10 +40,10 @@ enum class PspAttributeLocation {
 struct VulkanPipelineKey {
 	VulkanPipelineRasterStateKey raster;  // prim is included here
 	VkRenderPass renderPass;
-	bool useHWTransform;
-	const VertexDecoder *vtxDec;
 	VkShaderModule vShader;
 	VkShaderModule fShader;
+	uint32_t vtxDecId;
+	bool useHWTransform;
 
 	void ToString(std::string *str) const {
 		str->resize(sizeof(*this));
@@ -64,6 +64,8 @@ enum {
 struct VulkanPipeline {
 	VkPipeline pipeline;
 	int uniformBlocks;  // UB_ enum above.
+	bool useBlendConstant;
+	bool usesLines;
 };
 
 class VulkanContext;
@@ -75,10 +77,12 @@ public:
 	PipelineManagerVulkan(VulkanContext *ctx);
 	~PipelineManagerVulkan();
 
-	VulkanPipeline *GetOrCreatePipeline(VkPipelineLayout layout, VkRenderPass renderPass, const VulkanPipelineRasterStateKey &rasterKey, const VertexDecoder *vtxDec, VulkanVertexShader *vs, VulkanFragmentShader *fs, bool useHwTransform);
+	VulkanPipeline *GetOrCreatePipeline(VkPipelineLayout layout, VkRenderPass renderPass, const VulkanPipelineRasterStateKey &rasterKey, const DecVtxFormat *decFmt, VulkanVertexShader *vs, VulkanFragmentShader *fs, bool useHwTransform);
 	int GetNumPipelines() const { return (int)pipelines_.size(); }
 
 	void Clear();
+
+	void SetLineWidth(float lw);
 
 	void DeviceLost();
 	void DeviceRestore(VulkanContext *vulkan);
@@ -90,4 +94,5 @@ private:
 	DenseHashMap<VulkanPipelineKey, VulkanPipeline *, nullptr> pipelines_;
 	VkPipelineCache pipelineCache_;
 	VulkanContext *vulkan_;
+	float lineWidth_ = 1.0f;
 };

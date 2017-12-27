@@ -31,6 +31,8 @@ public:
 	virtual bool touch(const TouchInput &touch) override;
 	virtual void dialogFinished(const Screen *dialog, DialogResult result) override;
 	virtual void onFinish(DialogResult reason) override;
+	virtual void resized() override;
+	std::string tag() const override { return "display layout screen"; }
 	
 protected:
 	virtual UI::EventReturn OnCenter(UI::EventParams &e);
@@ -43,6 +45,9 @@ private:
 	UI::PopupMultiChoice *zoom_;
 	UI::PopupMultiChoice *rotation_;
 	bool displayRotEnable_;
+	bool bRotated;
+	bool stickToEdgeX;
+	bool stickToEdgeY;
 	// Touch down state for drag to resize etc
 	float startX_;
 	float startY_;

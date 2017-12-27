@@ -28,6 +28,7 @@
 #include "Core/HDRemaster.h"
 #include "Core/Reporting.h"
 #include "Core/MIPS/JitCommon/JitCommon.h"
+#include "Core/Util/AudioFormat.h"  // for clamp_u8
 #include "GPU/Common/ShaderCommon.h"
 #include "GPU/GPUState.h"
 #include "GPU/ge_constants.h"
@@ -42,7 +43,7 @@ static const u8 wtsize[4] = { 0, 1, 2, 4 }, wtalign[4] = { 0, 1, 2, 4 };
 
 // When software skinning. This array is only used when non-jitted - when jitted, the matrix
 // is kept in registers.
-static float MEMORY_ALIGNED16(skinMatrix[12]);
+alignas(16) static float skinMatrix[12];
 
 inline int align(int n, int align) {
 	return (n + (align - 1)) & ~(align - 1);
@@ -72,11 +73,13 @@ int DecFmtSize(u8 fmt) {
 	case DEC_U16_2: return 4;
 	case DEC_U16_3: return 8;
 	case DEC_U16_4: return 8;
-	case DEC_U8A_2: return 4;
-	case DEC_U16A_2: return 4;
 	default:
 		return 0;
 	}
+}
+
+void DecVtxFormat::ComputeID() {
+	id = w0fmt | (w1fmt << 4) | (uvfmt << 8) | (c0fmt << 12) | (c1fmt << 16) | (nrmfmt << 20) | (posfmt << 24);
 }
 
 void GetIndexBounds(const void *inds, int count, u32 vertType, u16 *indexLowerBound, u16 *indexUpperBound) {
@@ -1122,8 +1125,9 @@ void VertexDecoder::SetVertexType(u32 fmt, const VertexDecoderOptions &options, 
 		decOff += DecFmtSize(decFmt.nrmfmt);
 	}
 
+	bool reportNoPos = false;
 	if (!pos) {
-		ERROR_LOG_REPORT(G3D, "Vertices without position found");
+		reportNoPos = true;
 		pos = 1;
 	}
 	if (pos) { // there's always a position
@@ -1151,10 +1155,18 @@ void VertexDecoder::SetVertexType(u32 fmt, const VertexDecoderOptions &options, 
 
 	decFmt.stride = decOff;
 
+	decFmt.ComputeID();
+
 	size = align(size, biggest);
 	onesize_ = size;
 	size *= morphcount;
 	DEBUG_LOG(G3D, "SVT : size = %i, aligned to biggest %i", size, biggest);
+
+	if (reportNoPos) {
+		char temp[256]{};
+		ToString(temp);
+		ERROR_LOG_REPORT(G3D, "Vertices without position found: (%08x) %s", fmt_, temp);
+	}
 
 	// Attempt to JIT as well. But only do that if the main CPU JIT is enabled, in order to aid
 	// debugging attempts - if the main JIT doesn't work, this one won't do any better, probably.

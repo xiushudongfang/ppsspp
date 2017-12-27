@@ -49,14 +49,7 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 
 // Runs after NativeInit() at some point. May (and probably should) call OpenGL.
 // Should not initialize anything screen-size-dependent - do that in NativeResized.
-void NativeInitGraphics(GraphicsContext *graphicsContext);
-
-// Signals that you need to forget all buffered OpenGL resources,
-// like textures, vbo etc.
-void NativeDeviceLost();
-
-// Signals that it's time to recreate buffered OpenGL resources
-void NativeDeviceRestore();
+bool NativeInitGraphics(GraphicsContext *graphicsContext);
 
 // If you want to change DPI stuff (such as modifying dp_xres and dp_yres), this is the
 // place to do it. You should only read g_dpi_scale and pixel_xres and pixel_yres in this,
@@ -118,7 +111,7 @@ void NativeSaveState();  // onDestroy
 void NativePermissionStatus(SystemPermission permission, PermissionStatus status);
 
 // Calls back into Java / SDL
-// These APIs must be implemented by every port (for example app-android.cpp, PCMain.cpp).
+// These APIs must be implemented by every port (for example app-android.cpp, SDLMain.cpp).
 // You are free to call these.
 void SystemToast(const char *text);
 void ShowKeyboard();
@@ -190,3 +183,6 @@ enum SystemProperty {
 std::string System_GetProperty(SystemProperty prop);
 int System_GetPropertyInt(SystemProperty prop);
 bool System_GetPropertyBool(SystemProperty prop);
+
+void PushNewGpsData(float latitude, float longitude, float altitude, float speed, float bearing, long long time);
+void PushCameraImage(long long length, unsigned char* image);

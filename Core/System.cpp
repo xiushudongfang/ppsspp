@@ -24,8 +24,10 @@
 #include <string>
 #include <codecvt>
 #endif
+
 #include <thread>
 #include <mutex>
+#include <condition_variable>
 
 #include "math/math_util.h"
 #include "thread/threadutil.h"
@@ -328,7 +330,6 @@ void CPU_RunLoop() {
 		switch (cpuThreadState) {
 		case CPU_THREAD_EXECUTE:
 			mipsr4k.RunLoopUntil(cpuThreadUntil);
-			gpu->FinishEventLoop();
 			CPU_NextState(CPU_THREAD_EXECUTE, CPU_THREAD_RUNNING);
 			break;
 
@@ -354,12 +355,6 @@ void CPU_RunLoop() {
 		coreState = CORE_POWERDOWN;
 	}
 
-	// Let's make sure the gpu has already cleaned up before we start freeing memory.
-	if (gpu) {
-		gpu->FinishEventLoop();
-		gpu->SyncThread(true);
-	}
-
 	CPU_Shutdown();
 	CPU_SetState(CPU_THREAD_NOT_RUNNING);
 }
@@ -371,9 +366,9 @@ void Core_UpdateState(CoreState newState) {
 	Core_UpdateSingleStep();
 }
 
-static void Core_UpdateDebugStats(bool flag) {
-	if (coreCollectDebugStats != flag) {
-		coreCollectDebugStats = flag;
+void Core_UpdateDebugStats(bool collectStats) {
+	if (coreCollectDebugStats != collectStats) {
+		coreCollectDebugStats = collectStats;
 		mipsr4k.ClearJitCache();
 	}
 
@@ -384,18 +379,15 @@ static void Core_UpdateDebugStats(bool flag) {
 void System_Wake() {
 	// Ping the threads so they check coreState.
 	CPU_NextStateNot(CPU_THREAD_NOT_RUNNING, CPU_THREAD_SHUTDOWN);
-	if (gpu) {
-		gpu->FinishEventLoop();
-	}
 }
 
 // Ugly!
 static bool pspIsInited = false;
 static bool pspIsIniting = false;
-static bool pspIsQuiting = false;
+static bool pspIsQuitting = false;
 
 bool PSP_InitStart(const CoreParameter &coreParam, std::string *error_string) {
-	if (pspIsIniting || pspIsQuiting) {
+	if (pspIsIniting || pspIsQuitting) {
 		return false;
 	}
 
@@ -415,7 +407,9 @@ bool PSP_InitStart(const CoreParameter &coreParam, std::string *error_string) {
 	coreParameter.errorString = "";
 	pspIsIniting = true;
 
-	if (g_Config.bSeparateCPUThread) {
+	// Keeping this around because we might need it in the future.
+	const bool separateCPUThread = false;
+	if (separateCPUThread) {
 		Core_ListenShutdown(System_Wake);
 		CPU_SetState(CPU_THREAD_PENDING);
 		cpuThread = new std::thread(&CPU_RunLoop);
@@ -438,28 +432,29 @@ bool PSP_InitUpdate(std::string *error_string) {
 		return true;
 	}
 
-	if (g_Config.bSeparateCPUThread && !CPU_IsReady()) {
+	if (!CPU_IsReady()) {
 		return false;
 	}
 
 	bool success = coreParameter.fileToStart != "";
 	*error_string = coreParameter.errorString;
-	if (success) {
+	if (success && gpu == nullptr) {
 		success = GPU_Init(coreParameter.graphicsContext, coreParameter.thin3d);
 		if (!success) {
 			PSP_Shutdown();
 			*error_string = "Unable to initialize rendering engine.";
 		}
 	}
-	pspIsInited = success;
-	pspIsIniting = false;
-	return true;
+	pspIsInited = success && GPU_IsReady();
+	pspIsIniting = success && !pspIsInited;
+	return !success || pspIsInited;
 }
 
 bool PSP_Init(const CoreParameter &coreParam, std::string *error_string) {
 	PSP_InitStart(coreParam, error_string);
 
-	if (g_Config.bSeparateCPUThread) {
+	// For a potential resurrection of separate CPU thread later.
+	if (false) {
 		CPU_WaitStatus(cpuThreadReplyCond, &CPU_IsReady);
 	}
 
@@ -472,12 +467,12 @@ bool PSP_IsIniting() {
 }
 
 bool PSP_IsInited() {
-	return pspIsInited && !pspIsQuiting;
+	return pspIsInited && !pspIsQuitting;
 }
 
 void PSP_Shutdown() {
 	// Do nothing if we never inited.
-	if (!pspIsInited && !pspIsIniting && !pspIsQuiting) {
+	if (!pspIsInited && !pspIsIniting && !pspIsQuitting) {
 		return;
 	}
 
@@ -488,7 +483,7 @@ void PSP_Shutdown() {
 #endif
 
 	// Make sure things know right away that PSP memory, etc. is going away.
-	pspIsQuiting = true;
+	pspIsQuitting = true;
 	if (coreState == CORE_RUNNING)
 		Core_UpdateState(CORE_ERROR);
 	Core_NotifyShutdown();
@@ -507,7 +502,7 @@ void PSP_Shutdown() {
 	currentMIPS = 0;
 	pspIsInited = false;
 	pspIsIniting = false;
-	pspIsQuiting = false;
+	pspIsQuitting = false;
 	g_Config.unloadGameConfig();
 }
 
@@ -525,15 +520,14 @@ void PSP_EndHostFrame() {
 }
 
 void PSP_RunLoopUntil(u64 globalticks) {
-	Core_UpdateDebugStats(g_Config.bShowDebugStats || g_Config.bLogFrameDrops);
-
 	SaveState::Process();
 	if (coreState == CORE_POWERDOWN || coreState == CORE_ERROR) {
 		return;
 	}
 
-	// Switch the CPU thread on or off, as the case may be.
-	bool useCPUThread = g_Config.bSeparateCPUThread;
+	// We no longer allow a separate CPU thread but if we add a render queue
+	// to GL we're gonna need it.
+	bool useCPUThread = false;
 	if (useCPUThread && cpuThread == nullptr) {
 		// Need to start the cpu thread.
 		Core_ListenShutdown(System_Wake);
@@ -541,9 +535,8 @@ void PSP_RunLoopUntil(u64 globalticks) {
 		cpuThread = new std::thread(&CPU_RunLoop);
 		cpuThreadID = cpuThread->get_id();
 		cpuThread->detach();
-		if (gpu) {
-			gpu->SetThreadEnabled(true);
-		}
+		// Probably needs to tell the gpu that it will need to queue up its output
+		// on another thread.
 		CPU_WaitStatus(cpuThreadReplyCond, &CPU_IsReady);
 	} else if (!useCPUThread && cpuThread != nullptr) {
 		CPU_SetState(CPU_THREAD_QUIT);
@@ -551,21 +544,15 @@ void PSP_RunLoopUntil(u64 globalticks) {
 		delete cpuThread;
 		cpuThread = nullptr;
 		cpuThreadID = std::thread::id();
-		if (gpu) {
-			gpu->SetThreadEnabled(false);
-		}
 	}
 
 	if (cpuThread != nullptr) {
-		// Tell the gpu a new frame is about to begin, before we start the CPU.
-		gpu->SyncBeginFrame();
-
 		cpuThreadUntil = globalticks;
 		if (CPU_NextState(CPU_THREAD_RUNNING, CPU_THREAD_EXECUTE)) {
 			// The CPU doesn't actually respect cpuThreadUntil well, especially when skipping frames.
 			// TODO: Something smarter?  Or force CPU to bail periodically?
 			while (!CPU_IsReady()) {
-				gpu->RunEventsUntil(CoreTiming::GetTicks() + msToCycles(1000));
+				// Have the GPU do stuff here.
 				if (coreState != CORE_RUNNING) {
 					CPU_WaitStatus(cpuThreadReplyCond, &CPU_IsReady);
 				}
@@ -650,7 +637,11 @@ void InitSysDirectories() {
 
 	// If installed.txt exists(and we can determine the Documents directory)
 	if (installed && (result == S_OK))	{
+#if defined(_WIN32) && defined(__MINGW32__)
+		std::ifstream inputFile(installedFile);
+#else
 		std::ifstream inputFile(ConvertUTF8ToWString(installedFile));
+#endif
 
 		if (!inputFile.fail() && inputFile.is_open()) {
 			std::string tempString;

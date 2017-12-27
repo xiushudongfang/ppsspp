@@ -17,7 +17,6 @@
 
 #include <algorithm>
 
-#include "base/compat.h"
 #include "gfx_es2/gpu_features.h"
 #include "i18n/i18n.h"
 #include "ui/ui_context.h"
@@ -338,6 +337,8 @@ void SystemInfoScreen::CreateViews() {
 
 	// NOTE: Do not translate this section. It will change a lot and will be impossible to keep up.
 	I18NCategory *di = GetI18NCategory("Dialog");
+	I18NCategory *si = GetI18NCategory("SysInfo");
+	I18NCategory *gr = GetI18NCategory("Graphics");
 	root_ = new AnchorLayout(new LayoutParams(FILL_PARENT, FILL_PARENT));
 
 	ViewGroup *leftColumn = new AnchorLayout(new LinearLayoutParams(1.0f));
@@ -354,75 +355,82 @@ void SystemInfoScreen::CreateViews() {
 	LinearLayout *deviceSpecs = new LinearLayout(ORIENT_VERTICAL);
 	deviceSpecs->SetSpacing(0);
 	deviceSpecsScroll->Add(deviceSpecs);
-	tabHolder->AddTab("Device Info", deviceSpecsScroll);
+	tabHolder->AddTab(si->T("Device Info"), deviceSpecsScroll);
 
-	deviceSpecs->Add(new ItemHeader("System Information"));
-	deviceSpecs->Add(new InfoItem("Name", System_GetProperty(SYSPROP_NAME)));
-	deviceSpecs->Add(new InfoItem("Lang/Region", System_GetProperty(SYSPROP_LANGREGION)));
+	deviceSpecs->Add(new ItemHeader(si->T("System Information")));
+	deviceSpecs->Add(new InfoItem(si->T("System Name", "Name"), System_GetProperty(SYSPROP_NAME)));
+	deviceSpecs->Add(new InfoItem(si->T("Lang/Region"), System_GetProperty(SYSPROP_LANGREGION)));
 	std::string board = System_GetProperty(SYSPROP_BOARDNAME);
 	if (!board.empty())
-		deviceSpecs->Add(new InfoItem("Board", board));
-	deviceSpecs->Add(new InfoItem("ABI", GetCompilerABI()));
+		deviceSpecs->Add(new InfoItem(si->T("Board"), board));
+	deviceSpecs->Add(new InfoItem(si->T("ABI"), GetCompilerABI()));
 #ifdef _WIN32
 	if (IsDebuggerPresent()) {
-		deviceSpecs->Add(new InfoItem("Debugger Present", "Yes"));
+		deviceSpecs->Add(new InfoItem(si->T("Debugger Present"), si->T("Yes")));
 	}
 #endif
 
-	deviceSpecs->Add(new ItemHeader("CPU Information"));
-	deviceSpecs->Add(new InfoItem("Name", cpu_info.brand_string));
+	deviceSpecs->Add(new ItemHeader(si->T("CPU Information")));
+	deviceSpecs->Add(new InfoItem(si->T("CPU Name", "Name"), cpu_info.brand_string));
 #if defined(ARM) || defined(ARM64) || defined(MIPS)
-	deviceSpecs->Add(new InfoItem("Cores", StringFromInt(cpu_info.num_cores)));
+	deviceSpecs->Add(new InfoItem(si->T("Cores"), StringFromInt(cpu_info.num_cores)));
 #else
 	int totalThreads = cpu_info.num_cores * cpu_info.logical_cpu_count;
-	std::string cores = StringFromFormat("%d (%d per core, %d cores)", totalThreads, cpu_info.logical_cpu_count, cpu_info.num_cores);
-	deviceSpecs->Add(new InfoItem("Threads", cores));
+	std::string cores = StringFromFormat(si->T("%d (%d per core, %d cores)"), totalThreads, cpu_info.logical_cpu_count, cpu_info.num_cores);
+	deviceSpecs->Add(new InfoItem(si->T("Threads"), cores));
 #endif
-	deviceSpecs->Add(new ItemHeader("GPU Information"));
+	deviceSpecs->Add(new ItemHeader(si->T("GPU Information")));
 
 	DrawContext *draw = screenManager()->getDrawContext();
 
-	deviceSpecs->Add(new InfoItem("3D API", std::string(draw->GetInfoString(InfoField::APINAME))));
-	deviceSpecs->Add(new InfoItem("Vendor", std::string(draw->GetInfoString(InfoField::VENDORSTRING))));
+	const char *apiName = gr->T(screenManager()->getDrawContext()->GetInfoString(InfoField::APINAME));
+	deviceSpecs->Add(new InfoItem(si->T("3D API"), apiName));
+	deviceSpecs->Add(new InfoItem(si->T("Vendor"), draw->GetInfoString(InfoField::VENDORSTRING)));
 	std::string vendor = draw->GetInfoString(InfoField::VENDOR);
 	if (vendor.size())
-		deviceSpecs->Add(new InfoItem("Vendor (detected)", vendor));
-	deviceSpecs->Add(new InfoItem("Driver", draw->GetInfoString(InfoField::DRIVER)));
+		deviceSpecs->Add(new InfoItem(si->T("Vendor (detected)"), vendor));
+	deviceSpecs->Add(new InfoItem(si->T("Driver Version"), draw->GetInfoString(InfoField::DRIVER)));
 #ifdef _WIN32
-	deviceSpecs->Add(new InfoItem("Driver Version", System_GetProperty(SYSPROP_GPUDRIVER_VERSION)));
+	if (GetGPUBackend() != GPUBackend::VULKAN)
+		deviceSpecs->Add(new InfoItem(si->T("Driver Version"), System_GetProperty(SYSPROP_GPUDRIVER_VERSION)));
 #if !PPSSPP_PLATFORM(UWP)
 	if (GetGPUBackend() == GPUBackend::DIRECT3D9) {
-		deviceSpecs->Add(new InfoItem("D3DX Version", StringFromFormat("%d", GetD3DXVersion())));
+		deviceSpecs->Add(new InfoItem(si->T("D3DX Version"), StringFromFormat("%d", GetD3DXVersion())));
 	}
 #endif
 #endif
-	deviceSpecs->Add(new ItemHeader("OS Information"));
-	deviceSpecs->Add(new InfoItem("Memory Page Size", StringFromFormat("%d bytes", GetMemoryProtectPageSize())));
-	deviceSpecs->Add(new InfoItem("RW/RX exclusive: ", PlatformIsWXExclusive() ? "Yes" : "No"));
-	deviceSpecs->Add(new InfoItem("Sustained perf mode: ", System_GetPropertyBool(SYSPROP_SUPPORTS_SUSTAINED_PERF_MODE) ? "Yes" : "No"));
-
-	const char *build = "Release";
-#ifdef _DEBUG
-	build = "Debug";
+	if (GetGPUBackend() == GPUBackend::OPENGL) {
+		deviceSpecs->Add(new InfoItem(si->T("Core Context"), gl_extensions.IsCoreContext ? si->T("Yes") : si->T("No")));
+	}
+	deviceSpecs->Add(new ItemHeader(si->T("OS Information")));
+	deviceSpecs->Add(new InfoItem(si->T("Memory Page Size"), StringFromFormat(si->T("%d bytes"), GetMemoryProtectPageSize())));
+	deviceSpecs->Add(new InfoItem(si->T("RW/RX exclusive"), PlatformIsWXExclusive() ? si->T("Yes") : si->T("No")));
+#ifdef ANDROID
+	deviceSpecs->Add(new InfoItem(si->T("Sustained perf mode"), System_GetPropertyBool(SYSPROP_SUPPORTS_SUSTAINED_PERF_MODE) ? si->T("Yes") : si->T("No")));
 #endif
-	deviceSpecs->Add(new InfoItem("PPSSPP build: ", build));
+
+	const char *build = si->T("Release");
+#ifdef _DEBUG
+	build = si->T("Debug");
+#endif
+	deviceSpecs->Add(new InfoItem(si->T("PPSSPP build"), build));
 
 #ifdef __ANDROID__
-	deviceSpecs->Add(new ItemHeader("Audio Information"));
-	deviceSpecs->Add(new InfoItem("Sample rate", StringFromFormat("%d Hz", System_GetPropertyInt(SYSPROP_AUDIO_SAMPLE_RATE))));
-	deviceSpecs->Add(new InfoItem("Frames per buffer", StringFromFormat("%d", System_GetPropertyInt(SYSPROP_AUDIO_FRAMES_PER_BUFFER))));
-	deviceSpecs->Add(new InfoItem("Optimal sample rate", StringFromFormat("%d Hz", System_GetPropertyInt(SYSPROP_AUDIO_OPTIMAL_SAMPLE_RATE))));
-	deviceSpecs->Add(new InfoItem("Optimal frames per buffer", StringFromFormat("%d", System_GetPropertyInt(SYSPROP_AUDIO_OPTIMAL_FRAMES_PER_BUFFER))));
+	deviceSpecs->Add(new ItemHeader(si->T("Audio Information")));
+	deviceSpecs->Add(new InfoItem(si->T("Sample rate"), StringFromFormat("%d Hz", System_GetPropertyInt(SYSPROP_AUDIO_SAMPLE_RATE))));
+	deviceSpecs->Add(new InfoItem(si->T("Frames per buffer"), StringFromFormat("%d", System_GetPropertyInt(SYSPROP_AUDIO_FRAMES_PER_BUFFER))));
+	deviceSpecs->Add(new InfoItem(si->T("Optimal sample rate"), StringFromFormat("%d Hz", System_GetPropertyInt(SYSPROP_AUDIO_OPTIMAL_SAMPLE_RATE))));
+	deviceSpecs->Add(new InfoItem(si->T("Optimal frames per buffer"), StringFromFormat("%d", System_GetPropertyInt(SYSPROP_AUDIO_OPTIMAL_FRAMES_PER_BUFFER))));
 
-	deviceSpecs->Add(new ItemHeader("Display Information"));
-	deviceSpecs->Add(new InfoItem("Native Resolution", StringFromFormat("%dx%d",
+	deviceSpecs->Add(new ItemHeader(si->T("Display Information")));
+	deviceSpecs->Add(new InfoItem(si->T("Native Resolution"), StringFromFormat("%dx%d",
 		System_GetPropertyInt(SYSPROP_DISPLAY_XRES),
 		System_GetPropertyInt(SYSPROP_DISPLAY_YRES))));
-	deviceSpecs->Add(new InfoItem("Refresh rate", StringFromFormat("%0.3f Hz", (float)System_GetPropertyInt(SYSPROP_DISPLAY_REFRESH_RATE) / 1000.0f)));
+	deviceSpecs->Add(new InfoItem(si->T("Refresh rate"), StringFromFormat("%0.3f Hz", (float)System_GetPropertyInt(SYSPROP_DISPLAY_REFRESH_RATE) / 1000.0f)));
 #endif
 
 
-	deviceSpecs->Add(new ItemHeader("Version Information"));
+	deviceSpecs->Add(new ItemHeader(si->T("Version Information")));
 	std::string apiVersion;
 	if (GetGPUBackend() == GPUBackend::OPENGL) {
 		if (gl_extensions.IsGLES) {
@@ -435,21 +443,15 @@ void SystemInfoScreen::CreateViews() {
 		if (apiVersion.size() > 30)
 			apiVersion.resize(30);
 	}
-	deviceSpecs->Add(new InfoItem("API Version", apiVersion));
-	deviceSpecs->Add(new InfoItem("Shading Language", draw->GetInfoString(InfoField::SHADELANGVERSION)));
+	deviceSpecs->Add(new InfoItem(si->T("API Version"), apiVersion));
+	deviceSpecs->Add(new InfoItem(si->T("Shading Language"), draw->GetInfoString(InfoField::SHADELANGVERSION)));
 
 #ifdef __ANDROID__
 	std::string moga = System_GetProperty(SYSPROP_MOGA_VERSION);
 	if (moga.empty()) {
-		moga = "(none detected)";
+		moga = si->T("(none detected)");
 	}
 	deviceSpecs->Add(new InfoItem("Moga", moga));
-#endif
-
-#ifdef __ANDROID__
-	char temp[256];
-	sprintf(temp, "%dx%d", System_GetPropertyInt(SYSPROP_DISPLAY_XRES), System_GetPropertyInt(SYSPROP_DISPLAY_YRES));
-	deviceSpecs->Add(new InfoItem("Display resolution", temp));
 #endif
 
 	ViewGroup *buildConfigScroll = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, FILL_PARENT));
@@ -457,11 +459,11 @@ void SystemInfoScreen::CreateViews() {
 	LinearLayout *buildConfig = new LinearLayout(ORIENT_VERTICAL);
 	buildConfig->SetSpacing(0);
 	buildConfigScroll->Add(buildConfig);
-	tabHolder->AddTab("Build Config", buildConfigScroll);
+	tabHolder->AddTab(si->T("Build Config"), buildConfigScroll);
 
-	buildConfig->Add(new ItemHeader("Build Configuration"));
+	buildConfig->Add(new ItemHeader(si->T("Build Configuration")));
 #ifdef JENKINS
-	buildConfig->Add(new InfoItem("Built by", "Jenkins"));
+	buildConfig->Add(new InfoItem(si->T("Built by"), "Jenkins"));
 #endif
 #ifdef _DEBUG
 	buildConfig->Add(new InfoItem("_DEBUG", ""));
@@ -474,6 +476,15 @@ void SystemInfoScreen::CreateViews() {
 #ifdef MOBILE_DEVICE
 	buildConfig->Add(new InfoItem("MOBILE_DEVICE", ""));
 #endif
+#if PPSSPP_ARCH(ARMV7S)
+	buildConfig->Add(new InfoItem("ARMV7S", ""));
+#endif
+#if PPSSPP_ARCH(ARM_NEON)
+	buildConfig->Add(new InfoItem("ARM_NEON", ""));
+#endif
+#ifdef _M_SSE
+	buildConfig->Add(new InfoItem("_M_SSE", StringFromFormat("0x%x", _M_SSE)));
+#endif
 	if (System_GetPropertyBool(SYSPROP_APP_GOLD)) {
 		buildConfig->Add(new InfoItem("GOLD", ""));
 	}
@@ -484,36 +495,36 @@ void SystemInfoScreen::CreateViews() {
 	cpuExtensions->SetSpacing(0);
 	cpuExtensionsScroll->Add(cpuExtensions);
 
-	tabHolder->AddTab("CPU Extensions", cpuExtensionsScroll);
+	tabHolder->AddTab(si->T("CPU Extensions"), cpuExtensionsScroll);
 
-	cpuExtensions->Add(new ItemHeader("CPU Extensions"));
+	cpuExtensions->Add(new ItemHeader(si->T("CPU Extensions")));
 	std::vector<std::string> exts;
 	SplitString(cpu_info.Summarize(), ',', exts);
 	for (size_t i = 2; i < exts.size(); i++) {
-		cpuExtensions->Add(new TextView(exts[i]))->SetFocusable(true);
+		cpuExtensions->Add(new TextView(exts[i], new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
 	}
 
-	ViewGroup *oglExtensionsScroll = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, FILL_PARENT));
-	oglExtensionsScroll->SetTag("DevSystemInfoOGLExt");
-	LinearLayout *oglExtensions = new LinearLayout(ORIENT_VERTICAL);
-	oglExtensions->SetSpacing(0);
-	oglExtensionsScroll->Add(oglExtensions);
+	ViewGroup *gpuExtensionsScroll = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, FILL_PARENT));
+	gpuExtensionsScroll->SetTag("DevSystemInfoOGLExt");
+	LinearLayout *gpuExtensions = new LinearLayout(ORIENT_VERTICAL);
+	gpuExtensions->SetSpacing(0);
+	gpuExtensionsScroll->Add(gpuExtensions);
 
-	if (g_Config.iGPUBackend == GPU_BACKEND_OPENGL) {
-		tabHolder->AddTab("OGL Extensions", oglExtensionsScroll);
+	if (GetGPUBackend() == GPUBackend::OPENGL) {
+		tabHolder->AddTab(si->T("OGL Extensions"), gpuExtensionsScroll);
 
 		if (!gl_extensions.IsGLES) {
-			oglExtensions->Add(new ItemHeader("OpenGL Extensions"));
+			gpuExtensions->Add(new ItemHeader(si->T("OpenGL Extensions")));
 		} else if (gl_extensions.GLES3) {
-			oglExtensions->Add(new ItemHeader("OpenGL ES 3.0 Extensions"));
+			gpuExtensions->Add(new ItemHeader(si->T("OpenGL ES 3.0 Extensions")));
 		} else {
-			oglExtensions->Add(new ItemHeader("OpenGL ES 2.0 Extensions"));
+			gpuExtensions->Add(new ItemHeader(si->T("OpenGL ES 2.0 Extensions")));
 		}
 		exts.clear();
 		SplitString(g_all_gl_extensions, ' ', exts);
 		std::sort(exts.begin(), exts.end());
-		for (size_t i = 0; i < exts.size(); i++) {
-			oglExtensions->Add(new TextView(exts[i]))->SetFocusable(true);
+		for (auto &extension : exts) {
+			gpuExtensions->Add(new TextView(extension, new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
 		}
 
 		exts.clear();
@@ -528,21 +539,26 @@ void SystemInfoScreen::CreateViews() {
 			eglExtensions->SetSpacing(0);
 			eglExtensionsScroll->Add(eglExtensions);
 
-			tabHolder->AddTab("EGL Extensions", eglExtensionsScroll);
+			tabHolder->AddTab(si->T("EGL Extensions"), eglExtensionsScroll);
 
-			eglExtensions->Add(new ItemHeader("EGL Extensions"));
+			eglExtensions->Add(new ItemHeader(si->T("EGL Extensions")));
 
-			for (size_t i = 0; i < exts.size(); i++) {
-				eglExtensions->Add(new TextView(exts[i]))->SetFocusable(true);
+			for (auto &extension : exts) {
+				eglExtensions->Add(new TextView(extension, new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
 			}
 		}
-	} else if (g_Config.iGPUBackend == GPU_BACKEND_VULKAN) {
-		tabHolder->AddTab("Vulkan Features", oglExtensionsScroll);
+	} else if (GetGPUBackend() == GPUBackend::VULKAN) {
+		tabHolder->AddTab(si->T("Vulkan Features"), gpuExtensionsScroll);
 
-		oglExtensions->Add(new ItemHeader("Vulkan Features"));
+		gpuExtensions->Add(new ItemHeader(si->T("Vulkan Features")));
 		std::vector<std::string> features = draw->GetFeatureList();
 		for (auto &feature : features) {
-			oglExtensions->Add(new TextView(feature))->SetFocusable(true);
+			gpuExtensions->Add(new TextView(feature, new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
+		}
+		gpuExtensions->Add(new ItemHeader(si->T("Vulkan Extensions")));
+		std::vector<std::string> extensions = draw->GetExtensionList();
+		for (auto &extension : extensions) {
+			gpuExtensions->Add(new TextView(extension, new LayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetFocusable(true);
 		}
 	}
 }
@@ -894,14 +910,17 @@ UI::EventReturn JitCompareScreen::OnCurrentBlock(UI::EventParams &e) {
 	return UI::EVENT_DONE;
 }
 
-void ShaderListScreen::ListShaders(DebugShaderType shaderType, UI::LinearLayout *view) {
+int ShaderListScreen::ListShaders(DebugShaderType shaderType, UI::LinearLayout *view) {
 	using namespace UI;
 	std::vector<std::string> shaderIds_ = gpu->DebugGetShaderIDs(shaderType);
+	int count = 0;
 	for (auto id : shaderIds_) {
 		Choice *choice = view->Add(new Choice(gpu->DebugGetShaderString(id, shaderType, SHADER_STRING_SHORT_DESC)));
 		choice->SetTag(id);
 		choice->OnClick.Handle(this, &ShaderListScreen::OnShaderClick);
+		count++;
 	}
+	return count;
 }
 
 struct { DebugShaderType type; const char *name; } shaderTypes[] = {
@@ -911,6 +930,7 @@ struct { DebugShaderType type; const char *name; } shaderTypes[] = {
 	{ SHADER_TYPE_VERTEXLOADER, "VertexLoader" },
 	{ SHADER_TYPE_PIPELINE, "Pipeline" },
 	{ SHADER_TYPE_DEPAL, "Depal" },
+	{ SHADER_TYPE_SAMPLER, "Sampler" },
 };
 
 void ShaderListScreen::CreateViews() {
@@ -928,9 +948,9 @@ void ShaderListScreen::CreateViews() {
 	for (size_t i = 0; i < ARRAY_SIZE(shaderTypes); i++) {
 		ScrollView *scroll = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(1.0));
 		LinearLayout *shaderList = new LinearLayout(ORIENT_VERTICAL, new LayoutParams(FILL_PARENT, WRAP_CONTENT));
-		ListShaders(shaderTypes[i].type, shaderList);
+		int count = ListShaders(shaderTypes[i].type, shaderList);
 		scroll->Add(shaderList);
-		tabs_->AddTab(shaderTypes[i].name, scroll);
+		tabs_->AddTab(StringFromFormat("%s (%d)", shaderTypes[i].name, count), scroll);
 	}
 }
 

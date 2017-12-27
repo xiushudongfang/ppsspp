@@ -24,8 +24,10 @@
 
 #include "Compare.h"
 #include "StubHost.h"
-#ifdef _WIN32
+#if defined(_WIN32)
 #include "WindowsHeadlessHost.h"
+#elif defined(SDL)
+#include "SDLHeadlessHost.h"
 #endif
 
 // https://github.com/richq/android-ndk-profiler
@@ -156,7 +158,11 @@ bool RunAutoTest(HeadlessHost *headlessHost, CoreParameter &coreParameter, bool 
 	static double deadline;
 	deadline = time_now() + timeout;
 
+	Core_UpdateDebugStats(g_Config.bShowDebugStats || g_Config.bLogFrameDrops);
+
 	PSP_BeginHostFrame();
+	if (coreParameter.thin3d)
+		coreParameter.thin3d->BeginFrame();
 
 	coreState = CORE_RUNNING;
 	while (coreState == CORE_RUNNING)
@@ -180,8 +186,10 @@ bool RunAutoTest(HeadlessHost *headlessHost, CoreParameter &coreParameter, bool 
 			Core_Stop();
 		}
 	}
-
 	PSP_EndHostFrame();
+
+	if (coreParameter.thin3d)
+		coreParameter.thin3d->EndFrame();
 
 	PSP_Shutdown();
 
@@ -199,7 +207,7 @@ int main(int argc, const char* argv[])
 {
 	PROFILE_INIT();
 
-#ifdef _DEBUG
+#if defined(_DEBUG) && defined(_MSC_VER)
 	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 #endif
 
@@ -264,7 +272,7 @@ int main(int argc, const char* argv[])
 			else if (!strcasecmp(gpuName, "null"))
 				gpuCore = GPUCORE_NULL;
 			else
-				return printUsage(argv[0], "Unknown gpu backend specified after --graphics=");
+				return printUsage(argv[0], "Unknown gpu backend specified after --graphics=. Allowed: software, directx9, directx11, vulkan, gles, null.");
 		}
 		// Default to GLES if no value selected.
 		else if (!strcmp(argv[i], "--graphics"))
@@ -345,7 +353,7 @@ int main(int argc, const char* argv[])
 #ifdef USING_GLES2
 	g_Config.iAnisotropyLevel = 0;
 #else
-	g_Config.iAnisotropyLevel = 4;
+	g_Config.iAnisotropyLevel = 0;  // When testing mipmapping we really don't want this.
 #endif
 	g_Config.bVertexCache = true;
 	g_Config.bTrueColor = true;
@@ -365,6 +373,7 @@ int main(int argc, const char* argv[])
 	g_Config.bVertexDecoderJit = true;
 	g_Config.bBlockTransferGPU = true;
 	g_Config.iSplineBezierQuality = 2;
+	g_Config.bHighQualityDepth = true;
 
 #ifdef _WIN32
 	InitSysDirectories();

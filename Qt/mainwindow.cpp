@@ -391,12 +391,12 @@ void MainWindow::fullscrAct()
 
 void MainWindow::websiteAct()
 {
-	QDesktopServices::openUrl(QUrl("http://www.ppsspp.org/"));
+	QDesktopServices::openUrl(QUrl("https://www.ppsspp.org/"));
 }
 
 void MainWindow::forumAct()
 {
-	QDesktopServices::openUrl(QUrl("http://forums.ppsspp.org/"));
+	QDesktopServices::openUrl(QUrl("https://forums.ppsspp.org/"));
 }
 
 void MainWindow::gitAct() 
@@ -551,7 +551,6 @@ void MainWindow::createMenus()
 	anisotropicGroup = new MenuActionGroup(this, anisotropicMenu, SLOT(anisotropicGroup_triggered(QAction *)),
 		QStringList() << "Off" << "2x" << "4x" << "8x" << "16x",
 		QList<int>()  << 0     << 1    << 2    << 3    << 4);
-	// TODO: Check for newer buffer render options
 	videoMenu->add(new MenuAction(this, SLOT(bufferRenderAct()),  QT_TR_NOOP("&Buffered Rendering"), Qt::Key_F5))
 		->addEventChecked(&g_Config.iRenderingMode);
 	videoMenu->add(new MenuAction(this, SLOT(linearAct()),        QT_TR_NOOP("&Linear Filtering")))

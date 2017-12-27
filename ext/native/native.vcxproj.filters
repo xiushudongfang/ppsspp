@@ -74,9 +74,6 @@
     <ClInclude Include="base\basictypes.h">
       <Filter>base</Filter>
     </ClInclude>
-    <ClInclude Include="gfx\gl_lost_manager.h">
-      <Filter>gfx</Filter>
-    </ClInclude>
     <ClInclude Include="gfx\texture_atlas.h">
       <Filter>gfx</Filter>
     </ClInclude>
@@ -281,9 +278,6 @@
     <ClInclude Include="thread\executor.h">
       <Filter>thread</Filter>
     </ClInclude>
-    <ClInclude Include="base\compat.h">
-      <Filter>base</Filter>
-    </ClInclude>
     <ClInclude Include="gfx\gl_common.h">
       <Filter>gfx</Filter>
     </ClInclude>
@@ -323,6 +317,21 @@
     <ClInclude Include="gfx_es2\draw_text_android.h">
       <Filter>gfx</Filter>
     </ClInclude>
+    <ClInclude Include="thin3d\VulkanQueueRunner.h">
+      <Filter>thin3d</Filter>
+    </ClInclude>
+    <ClInclude Include="thin3d\VulkanRenderManager.h">
+      <Filter>thin3d</Filter>
+    </ClInclude>
+    <ClInclude Include="thin3d\DataFormat.h">
+      <Filter>thin3d</Filter>
+    </ClInclude>
+    <ClInclude Include="ui\ui_tween.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Qt\QtMain.h">
+      <Filter>base</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="gfx\gl_debug_log.cpp">
@@ -360,9 +369,6 @@
     </ClCompile>
     <ClCompile Include="file\zip_read.cpp">
       <Filter>file</Filter>
-    </ClCompile>
-    <ClCompile Include="gfx\gl_lost_manager.cpp">
-      <Filter>gfx</Filter>
     </ClCompile>
     <ClCompile Include="gfx\texture_atlas.cpp">
       <Filter>gfx</Filter>
@@ -736,13 +742,10 @@
     <ClCompile Include="thread\executor.cpp">
       <Filter>thread</Filter>
     </ClCompile>
-    <ClCompile Include="base\compat.cpp">
+    <ClCompile Include="..\..\SDL\SDLMain.cpp">
       <Filter>base</Filter>
     </ClCompile>
-    <ClCompile Include="base\PCMain.cpp">
-      <Filter>base</Filter>
-    </ClCompile>
-    <ClCompile Include="base\QtMain.cpp">
+    <ClCompile Include="..\..\Qt\QtMain.cpp">
       <Filter>base</Filter>
     </ClCompile>
     <ClCompile Include="file\free.cpp">
@@ -786,6 +789,15 @@
     </ClCompile>
     <ClCompile Include="math\dataconv.cpp">
       <Filter>math</Filter>
+    </ClCompile>
+    <ClCompile Include="thin3d\VulkanQueueRunner.cpp">
+      <Filter>thin3d</Filter>
+    </ClCompile>
+    <ClCompile Include="thin3d\VulkanRenderManager.cpp">
+      <Filter>thin3d</Filter>
+    </ClCompile>
+    <ClCompile Include="ui\ui_tween.cpp">
+      <Filter>ui</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -27,8 +27,6 @@
 // Also provides facilities for drawing and later converting raw
 // pixel data.
 
-
-#include "Globals.h"
 #include "GPU/GPUCommon.h"
 #include "GPU/Common/FramebufferCommon.h"
 #include "Core/Config.h"
@@ -47,10 +45,7 @@ public:
 
 	void SetTextureCache(TextureCacheDX9 *tc);
 	void SetShaderManager(ShaderManagerDX9 *sm);
-	void SetDrawEngine(DrawEngineDX9 *td) {
-		drawEngine_ = td;
-	}
-
+	void SetDrawEngine(DrawEngineDX9 *td);
 	void DrawActiveTexture(float x, float y, float w, float h, float destW, float destH, float u0, float v0, float u1, float v1, int uvRotation, int flags) override;
 
 	void DestroyAllFBOs();
@@ -64,19 +59,12 @@ public:
 
 	void BindFramebufferAsColorTexture(int stage, VirtualFramebuffer *framebuffer, int flags);
 
-	void ReadFramebufferToMemory(VirtualFramebuffer *vfb, bool sync, int x, int y, int w, int h) override;
-	void DownloadFramebufferForClut(u32 fb_address, u32 loadBytes) override;
-
-	std::vector<FramebufferInfo> GetFramebufferList();
-
 	virtual bool NotifyStencilUpload(u32 addr, int size, bool skipZero = false) override;
 
 	bool GetFramebuffer(u32 fb_address, int fb_stride, GEBufferFormat format, GPUDebugBuffer &buffer, int maxRes);
 	bool GetDepthbuffer(u32 fb_address, int fb_stride, u32 z_address, int z_stride, GPUDebugBuffer &buffer) override;
 	bool GetStencilbuffer(u32 fb_address, int fb_stride, GPUDebugBuffer &buffer) override;
 	bool GetOutputFramebuffer(GPUDebugBuffer &buffer) override;
-
-	virtual void RebindFramebuffer() override;
 
 	LPDIRECT3DSURFACE9 GetOffscreenSurface(LPDIRECT3DSURFACE9 similarSurface, VirtualFramebuffer *vfb);
 	LPDIRECT3DSURFACE9 GetOffscreenSurface(D3DFORMAT fmt, u32 w, u32 h);
@@ -86,7 +74,6 @@ protected:
 	void BindPostShader(const PostShaderUniforms &uniforms) override;
 	void SetViewport2D(int x, int y, int w, int h) override;
 	void DisableState() override;
-	void FlushBeforeCopy() override;
 	void DecimateFBOs() override;
 
 	// Used by ReadFramebufferToMemory and later framebuffer block copies
@@ -97,7 +84,7 @@ protected:
 
 private:
 	void MakePixelTexture(const u8 *srcPixels, GEBufferFormat srcPixelFormat, int srcStride, int width, int height, float &u1, float &v1) override;
-	void PackFramebufferDirectx9_(VirtualFramebuffer *vfb, int x, int y, int w, int h);
+	void PackFramebufferSync_(VirtualFramebuffer *vfb, int x, int y, int w, int h) override;
 	void PackDepthbuffer(VirtualFramebuffer *vfb, int x, int y, int w, int h);
 	bool GetRenderTargetFramebuffer(LPDIRECT3DSURFACE9 renderTarget, LPDIRECT3DSURFACE9 offscreen, int w, int h, GPUDebugBuffer &buffer);
 
@@ -122,7 +109,7 @@ private:
 
 	TextureCacheDX9 *textureCacheDX9_;
 	ShaderManagerDX9 *shaderManagerDX9_;
-	DrawEngineDX9 *drawEngine_;
+	DrawEngineDX9 *drawEngineD3D9_;
 	
 	struct TempFBO {
 		Draw::Framebuffer *fbo;

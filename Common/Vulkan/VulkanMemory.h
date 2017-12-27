@@ -46,26 +46,9 @@ public:
 		Unmap();
 	}
 
-	void Map() {
-		assert(!writePtr_);
-		VkResult res = vkMapMemory(device_, buffers_[buf_].deviceMemory, 0, size_, 0, (void **)(&writePtr_));
-		assert(writePtr_);
-		assert(VK_SUCCESS == res);
-	}
+	void Map();
 
-	void Unmap() {
-		assert(writePtr_);
-		/*
-		// Should not need this since we use coherent memory.
-		VkMappedMemoryRange range = { VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE };
-		range.offset = 0;
-		range.size = offset_;
-		range.memory = buffers_[buf_].deviceMemory;
-		vkFlushMappedMemoryRanges(device_, 1, &range);
-		*/
-		vkUnmapMemory(device_, buffers_[buf_].deviceMemory);
-		writePtr_ = nullptr;
-	}
+	void Unmap();
 
 	// When using the returned memory, make sure to bind the returned vkbuf.
 	// This will later allow for handling overflow correctly.
@@ -103,8 +86,16 @@ public:
 	}
 
 	// "Zero-copy" variant - you can write the data directly as you compute it.
+	// Recommended.
 	void *Push(size_t size, uint32_t *bindOffset, VkBuffer *vkbuf) {
 		assert(writePtr_);
+		size_t off = Allocate(size, vkbuf);
+		*bindOffset = (uint32_t)off;
+		return writePtr_ + off;
+	}
+	void *PushAligned(size_t size, uint32_t *bindOffset, VkBuffer *vkbuf, int align) {
+		assert(writePtr_);
+		offset_ = (offset_ + align - 1) & ~(align - 1);
 		size_t off = Allocate(size, vkbuf);
 		*bindOffset = (uint32_t)off;
 		return writePtr_ + off;
@@ -155,6 +146,12 @@ public:
 
 	static const size_t ALLOCATE_FAILED = -1;
 
+	int GetBlockCount() const { return (int)slabs_.size(); }
+	int GetMinSlabSize() const { return (int)minSlabSize_; }
+	int GetMaxSlabSize() const { return (int)maxSlabSize_; }
+
+	int ComputeUsagePercent() const;
+
 private:
 	static const size_t SLAB_GRAIN_SIZE = 1024;
 	static const uint8_t SLAB_GRAIN_SHIFT = 10;
@@ -183,7 +180,7 @@ private:
 
 	static void DispatchFree(void *userdata) {
 		auto freeInfo = static_cast<FreeInfo *>(userdata);
-		freeInfo->allocator->ExecuteFree(freeInfo);
+		freeInfo->allocator->ExecuteFree(freeInfo);  // this deletes freeInfo
 	}
 
 	bool AllocateSlab(VkDeviceSize minBytes);
@@ -193,9 +190,9 @@ private:
 
 	VulkanContext *const vulkan_;
 	std::vector<Slab> slabs_;
-	size_t lastSlab_;
+	size_t lastSlab_ = 0;
 	size_t minSlabSize_;
 	const size_t maxSlabSize_;
-	uint32_t memoryTypeIndex_;
-	bool destroyed_;
+	uint32_t memoryTypeIndex_ = UNDEFINED_MEMORY_TYPE;
+	bool destroyed_ = false;
 };

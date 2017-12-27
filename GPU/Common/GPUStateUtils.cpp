@@ -302,7 +302,7 @@ ReplaceBlendType ReplaceBlendWithShader(bool allowShaderBlend, GEBufferFormat bu
 		case GE_DSTBLEND_DOUBLESRCALPHA:
 			// We can't technically do this correctly (due to clamping) without reading the dst color.
 			// Using a copy isn't accurate either, though, when there's overlap.
-			if (gstate_c.featureFlags & GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH)
+			if (gstate_c.Supports(GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH))
 				return !allowShaderBlend ? REPLACE_BLEND_PRE_SRC_2X_ALPHA : REPLACE_BLEND_COPY_FBO;
 			return REPLACE_BLEND_PRE_SRC_2X_ALPHA;
 
@@ -444,14 +444,14 @@ ReplaceBlendType ReplaceBlendWithShader(bool allowShaderBlend, GEBufferFormat bu
 		case GE_DSTBLEND_DOUBLESRCALPHA:
 			if (funcA == GE_SRCBLEND_SRCALPHA || funcA == GE_SRCBLEND_INVSRCALPHA) {
 				// Can't safely double alpha, will clamp.  However, a copy may easily be worse due to overlap.
-				if (gstate_c.featureFlags & GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH)
+				if (gstate_c.Supports(GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH))
 					return !allowShaderBlend ? REPLACE_BLEND_PRE_SRC_2X_ALPHA : REPLACE_BLEND_COPY_FBO;
 				return REPLACE_BLEND_PRE_SRC_2X_ALPHA;
 			} else {
 				// This means dst alpha/color is used in the src factor.
 				// Unfortunately, copying here causes overlap problems in Silent Hill games (it seems?)
 				// We will just hope that doubling alpha for the dst factor will not clamp too badly.
-				if (gstate_c.featureFlags & GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH)
+				if (gstate_c.Supports(GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH))
 					return !allowShaderBlend ? REPLACE_BLEND_2X_ALPHA : REPLACE_BLEND_COPY_FBO;
 				return REPLACE_BLEND_2X_ALPHA;
 			}
@@ -507,6 +507,9 @@ static const float DEPTH_SLICE_FACTOR_16BIT = 256.0f;
 float DepthSliceFactor() {
 	if (gstate_c.Supports(GPU_SCALE_DEPTH_FROM_24BIT_TO_16BIT)) {
 		return DEPTH_SLICE_FACTOR_16BIT;
+	}
+	if (gstate_c.Supports(GPU_SUPPORTS_DEPTH_CLAMP)) {
+		return 1.0f;
 	}
 	return DEPTH_SLICE_FACTOR_HIGH;
 }
@@ -681,6 +684,7 @@ void ConvertViewportAndScissor(bool useBufferedRendering, float renderWidth, flo
 		// So, we apply the depth range as minz/maxz, and transform for the viewport.
 		float vpZScale = gstate.getViewportZScale();
 		float vpZCenter = gstate.getViewportZCenter();
+		// TODO: This clip the entire draw if minz > maxz.
 		float minz = gstate.getDepthRangeMin();
 		float maxz = gstate.getDepthRangeMax();
 
@@ -696,7 +700,6 @@ void ConvertViewportAndScissor(bool useBufferedRendering, float renderWidth, flo
 				maxz += fullDepthRange;
 			}
 		}
-
 		// Okay.  So, in our shader, -1 will map to minz, and +1 will map to maxz.
 		float halfActualZRange = (maxz - minz) * (1.0f / 2.0f);
 		float zScale = halfActualZRange < std::numeric_limits<float>::epsilon() ? 1.0f : vpZScale / halfActualZRange;
@@ -1324,7 +1327,7 @@ void ConvertStencilFuncState(GenericStencilFuncState &state) {
 		return;
 
 	// The PSP's mask is reversed (bits not to write.)
-	state.writeMask = (~(gstate.pmska >> 0)) & 0xFF;
+	state.writeMask = (~gstate.pmska) & 0xFF;
 
 	state.sFail = gstate.getStencilOpSFail();
 	state.zFail = gstate.getStencilOpZFail();

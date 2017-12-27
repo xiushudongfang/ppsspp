@@ -25,6 +25,8 @@
 #include "UI/MiscScreens.h"
 #include "UI/MainScreen.h"
 
+bool StartRemoteISOSharing();
+
 class RemoteISOScreen : public UIScreenWithBackground {
 public:
 	RemoteISOScreen();
@@ -89,7 +91,10 @@ class RemoteISOSettingsScreen : public UIDialogScreenWithBackground {
 public:
 	RemoteISOSettingsScreen();
 
+	UI::EventReturn OnClickRemoteISOSubdir(UI::EventParams &e);
+	UI::EventReturn OnClickRemoteServer(UI::EventParams &e);
 protected:
+
 	void update() override;
 	void CreateViews() override;
 

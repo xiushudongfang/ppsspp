@@ -95,9 +95,10 @@ enum DoLightComputation {
 // is a bit of a rare configuration, although quite common on mobile.
 
 
-void GenerateVertexShader(const ShaderID &id, char *buffer) {
+void GenerateVertexShader(const VShaderID &id, char *buffer, uint32_t *attrMask, uint64_t *uniformMask) {
 	char *p = buffer;
-
+	*attrMask = 0;
+	*uniformMask = 0;
 	// #define USE_FOR_LOOP
 
 	// In GLSL ES 3.0, you use "out" variables instead.
@@ -111,7 +112,7 @@ void GenerateVertexShader(const ShaderID &id, char *buffer) {
 	bool highpTexcoord = false;
 
 	if (gl_extensions.IsGLES) {
-		if (gstate_c.featureFlags & GPU_SUPPORTS_GLSL_ES_300) {
+		if (gstate_c.Supports(GPU_SUPPORTS_GLSL_ES_300)) {
 			WRITE(p, "#version 300 es\n");
 			glslES30 = true;
 			texelFetch = "texelFetch";
@@ -164,7 +165,7 @@ void GenerateVertexShader(const ShaderID &id, char *buffer) {
 	}
 
 	bool isModeThrough = id.Bit(VS_BIT_IS_THROUGH);
-	bool lmode = id.Bit(VS_BIT_LMODE) && !isModeThrough;  // TODO: Different expression than in shaderIDgen
+	bool lmode = id.Bit(VS_BIT_LMODE);
 	bool doTexture = id.Bit(VS_BIT_DO_TEXTURE);
 	bool doTextureProjection = id.Bit(VS_BIT_DO_TEXTURE_TRANSFORM);
 
@@ -198,7 +199,7 @@ void GenerateVertexShader(const ShaderID &id, char *buffer) {
 	if (glslES30)
 		shading = doFlatShading ? "flat " : "";
 
-	DoLightComputation doLight[4] = {LIGHT_OFF, LIGHT_OFF, LIGHT_OFF, LIGHT_OFF};
+	DoLightComputation doLight[4] = { LIGHT_OFF, LIGHT_OFF, LIGHT_OFF, LIGHT_OFF };
 	if (useHWTransform) {
 		int shadeLight0 = doShadeMapping ? ls0 : -1;
 		int shadeLight1 = doShadeMapping ? ls1 : -1;
@@ -215,15 +216,21 @@ void GenerateVertexShader(const ShaderID &id, char *buffer) {
 	if (enableBones) {
 		numBoneWeights = 1 + id.Bits(VS_BIT_BONES, 3);
 		WRITE(p, "%s", boneWeightDecl[numBoneWeights]);
+		*attrMask |= 1 << ATTR_W1;
+		if (numBoneWeights >= 5)
+			*attrMask |= 1 << ATTR_W2;
 	}
 
 	if (useHWTransform)
 		WRITE(p, "%s vec3 position;\n", attribute);
 	else
 		WRITE(p, "%s vec4 position;\n", attribute);  // need to pass the fog coord in w
+	*attrMask |= 1 << ATTR_POSITION;
 
-	if (useHWTransform && hasNormal)
+	if (useHWTransform && hasNormal) {
 		WRITE(p, "%s mediump vec3 normal;\n", attribute);
+		*attrMask |= 1 << ATTR_NORMAL;
+	}
 
 	bool texcoordVec3In = false;
 	if (doTexture && hasTexcoord) {
@@ -233,17 +240,23 @@ void GenerateVertexShader(const ShaderID &id, char *buffer) {
 		} else {
 			WRITE(p, "%s vec2 texcoord;\n", attribute);
 		}
+		*attrMask |= 1 << ATTR_TEXCOORD;
 	}
 	if (hasColor) {
 		WRITE(p, "%s lowp vec4 color0;\n", attribute);
-		if (lmode && !useHWTransform)  // only software transform supplies color1 as vertex data
+		*attrMask |= 1 << ATTR_COLOR0;
+		if (lmode && !useHWTransform) { // only software transform supplies color1 as vertex data
 			WRITE(p, "%s lowp vec3 color1;\n", attribute);
+			*attrMask |= 1 << ATTR_COLOR1;
+		}
 	}
 
-	if (isModeThrough)	{
+	if (isModeThrough) {
 		WRITE(p, "uniform mat4 u_proj_through;\n");
+		*uniformMask |= DIRTY_PROJTHROUGHMATRIX;
 	} else {
 		WRITE(p, "uniform mat4 u_proj;\n");
+		*uniformMask |= DIRTY_PROJMATRIX;
 		// Add all the uniforms we'll need to transform properly.
 	}
 
@@ -253,28 +266,36 @@ void GenerateVertexShader(const ShaderID &id, char *buffer) {
 		// When transforming by hardware, we need a great deal more uniforms...
 		WRITE(p, "uniform mat4 u_world;\n");
 		WRITE(p, "uniform mat4 u_view;\n");
-		if (doTextureProjection)
+		*uniformMask |= DIRTY_WORLDMATRIX | DIRTY_VIEWMATRIX;
+		if (doTextureProjection) {
 			WRITE(p, "uniform mediump mat4 u_texmtx;\n");
+			*uniformMask |= DIRTY_TEXMATRIX;
+		}
 		if (enableBones) {
 #ifdef USE_BONE_ARRAY
 			WRITE(p, "uniform mediump mat4 u_bone[%i];\n", numBoneWeights);
+			*uniformMask |= DIRTY_BONE_UNIFORMS;
 #else
 			for (int i = 0; i < numBoneWeights; i++) {
 				WRITE(p, "uniform mat4 u_bone%i;\n", i);
+				*uniformMask |= DIRTY_BONEMATRIX0 << i;
 			}
 #endif
 		}
 		if (doTexture) {
 			WRITE(p, "uniform vec4 u_uvscaleoffset;\n");
+			*uniformMask |= DIRTY_UVSCALEOFFSET;
 		}
 		for (int i = 0; i < 4; i++) {
 			if (doLight[i] != LIGHT_OFF) {
 				// This is needed for shade mapping
 				WRITE(p, "uniform vec3 u_lightpos%i;\n", i);
+				*uniformMask |= DIRTY_LIGHT0 << i;
 			}
 			if (doLight[i] == LIGHT_FULL) {
-				GELightType type = static_cast<GELightType>(id.Bits(VS_BIT_LIGHT0_TYPE + 4*i, 2));
-				GELightComputation comp = static_cast<GELightComputation>(id.Bits(VS_BIT_LIGHT0_COMP + 4*i, 2));
+				*uniformMask |= DIRTY_LIGHT0 << i;
+				GELightType type = static_cast<GELightType>(id.Bits(VS_BIT_LIGHT0_TYPE + 4 * i, 2));
+				GELightComputation comp = static_cast<GELightComputation>(id.Bits(VS_BIT_LIGHT0_COMP + 4 * i, 2));
 
 				if (type != GE_LIGHTTYPE_DIRECTIONAL)
 					WRITE(p, "uniform mediump vec3 u_lightatt%i;\n", i);
@@ -294,22 +315,29 @@ void GenerateVertexShader(const ShaderID &id, char *buffer) {
 		}
 		if (enableLighting) {
 			WRITE(p, "uniform lowp vec4 u_ambient;\n");
-			if ((matUpdate & 2) == 0 || !hasColor)
+			*uniformMask |= DIRTY_AMBIENT;
+			if ((matUpdate & 2) == 0 || !hasColor) {
 				WRITE(p, "uniform lowp vec3 u_matdiffuse;\n");
+				*uniformMask |= DIRTY_MATDIFFUSE;
+			}
 			WRITE(p, "uniform lowp vec4 u_matspecular;\n");  // Specular coef is contained in alpha
 			WRITE(p, "uniform lowp vec3 u_matemissive;\n");
+			*uniformMask |= DIRTY_MATSPECULAR | DIRTY_MATEMISSIVE;
 		}
 	}
 
-	if (useHWTransform || !hasColor)
+	if (useHWTransform || !hasColor) {
 		WRITE(p, "uniform lowp vec4 u_matambientalpha;\n");  // matambient + matalpha
-
+		*uniformMask |= DIRTY_MATAMBIENTALPHA;
+	}
 	if (enableFog) {
 		WRITE(p, "uniform highp vec2 u_fogcoef;\n");
+		*uniformMask |= DIRTY_FOGCOEF;
 	}
 
 	if (!isModeThrough && gstate_c.Supports(GPU_ROUND_DEPTH_TO_16BIT)) {
 		WRITE(p, "uniform highp vec4 u_depthRange;\n");
+		*uniformMask |= DIRTY_DEPTHRANGE;
 	}
 
 	WRITE(p, "%s%s lowp vec4 v_color0;\n", shading, varying);
@@ -344,6 +372,8 @@ void GenerateVertexShader(const ShaderID &id, char *buffer) {
 
 	// Hardware tessellation
 	if (doBezier || doSpline) {
+		*uniformMask |= DIRTY_BEZIERSPLINE;
+
 		const char *sampler = !isAllowTexture1D ? "sampler2D" : "sampler1D";
 		WRITE(p, "uniform %s u_tess_pos_tex;\n", sampler);
 		WRITE(p, "uniform %s u_tess_tex_tex;\n", sampler);
@@ -667,7 +697,7 @@ void GenerateVertexShader(const ShaderID &id, char *buffer) {
 		bool diffuseIsZero = true;
 		bool specularIsZero = true;
 		bool distanceNeeded = false;
-
+		bool anySpots = false;
 		if (enableLighting) {
 			WRITE(p, "  lowp vec4 lightSum0 = u_ambient * %s + vec4(u_matemissive, 0.0);\n", ambientStr);
 
@@ -681,6 +711,8 @@ void GenerateVertexShader(const ShaderID &id, char *buffer) {
 					specularIsZero = false;
 				if (type != GE_LIGHTTYPE_DIRECTIONAL)
 					distanceNeeded = true;
+				if (type == GE_LIGHTTYPE_SPOT || type == GE_LIGHTTYPE_UNKNOWN)
+					anySpots = true;
 			}
 
 			if (!specularIsZero) {
@@ -693,6 +725,10 @@ void GenerateVertexShader(const ShaderID &id, char *buffer) {
 			if (distanceNeeded) {
 				WRITE(p, "  float distance;\n");
 				WRITE(p, "  lowp float lightScale;\n");
+			}
+			WRITE(p, "  mediump float ldot;\n");
+			if (anySpots) {
+				WRITE(p, "  lowp float angle;\n");
 			}
 		}
 
@@ -717,14 +753,14 @@ void GenerateVertexShader(const ShaderID &id, char *buffer) {
 			bool doSpecular = comp != GE_LIGHTCOMP_ONLYDIFFUSE;
 			bool poweredDiffuse = comp == GE_LIGHTCOMP_BOTHWITHPOWDIFFUSE;
 
-			WRITE(p, "  mediump float dot%i = max(dot(toLight, worldnormal), 0.0);\n", i);
+			WRITE(p, "  ldot = max(dot(toLight, worldnormal), 0.0);\n");
 			if (poweredDiffuse) {
 				// pow(0.0, 0.0) may be undefined, but the PSP seems to treat it as 1.0.
 				// Seen in Tales of the World: Radiant Mythology (#2424.)
-				WRITE(p, "  if (dot%i == 0.0 && u_matspecular.a == 0.0) {\n", i);
-				WRITE(p, "    dot%i = 1.0;\n", i);
+				WRITE(p, "  if (ldot == 0.0 && u_matspecular.a == 0.0) {\n");
+				WRITE(p, "    ldot = 1.0;\n");
 				WRITE(p, "  } else {\n");
-				WRITE(p, "    dot%i = pow(dot%i, u_matspecular.a);\n", i, i);
+				WRITE(p, "    ldot = pow(ldot, u_matspecular.a);\n");
 				WRITE(p, "  }\n");
 			}
 
@@ -740,9 +776,9 @@ void GenerateVertexShader(const ShaderID &id, char *buffer) {
 				break;
 			case GE_LIGHTTYPE_SPOT:
 			case GE_LIGHTTYPE_UNKNOWN:
-				WRITE(p, "  lowp float angle%i = dot(normalize(u_lightdir%i), toLight);\n", i, i);
-				WRITE(p, "  if (angle%i >= u_lightangle%i) {\n", i, i);
-				WRITE(p, "    lightScale = clamp(1.0 / dot(u_lightatt%i, vec3(1.0, distance, distance*distance)), 0.0, 1.0) * pow(angle%i, u_lightspotCoef%i);\n", i, i, i);
+				WRITE(p, "  angle = dot(normalize(u_lightdir%i), toLight);\n", i);
+				WRITE(p, "  if (angle >= u_lightangle%i) {\n", i);
+				WRITE(p, "    lightScale = clamp(1.0 / dot(u_lightatt%i, vec3(1.0, distance, distance*distance)), 0.0, 1.0) * pow(angle, u_lightspotCoef%i);\n", i, i);
 				WRITE(p, "  } else {\n");
 				WRITE(p, "    lightScale = 0.0;\n");
 				WRITE(p, "  }\n");
@@ -752,11 +788,11 @@ void GenerateVertexShader(const ShaderID &id, char *buffer) {
 				break;
 			}
 
-			WRITE(p, "  diffuse = (u_lightdiffuse%i * %s) * dot%i;\n", i, diffuseStr, i);
+			WRITE(p, "  diffuse = (u_lightdiffuse%i * %s) * ldot;\n", i, diffuseStr);
 			if (doSpecular) {
-				WRITE(p, "  dot%i = dot(normalize(toLight + vec3(0.0, 0.0, 1.0)), worldnormal);\n", i);
-				WRITE(p, "  if (dot%i > 0.0)\n", i);
-				WRITE(p, "    lightSum1 += u_lightspecular%i * %s * (pow(dot%i, u_matspecular.a) %s);\n", i, specularStr, i, timesLightScale);
+				WRITE(p, "  ldot = dot(normalize(toLight + vec3(0.0, 0.0, 1.0)), worldnormal);\n");
+				WRITE(p, "  if (ldot > 0.0)\n");
+				WRITE(p, "    lightSum1 += u_lightspecular%i * %s * (pow(ldot, u_matspecular.a) %s);\n", i, specularStr, timesLightScale);
 			}
 			WRITE(p, "  lightSum0.rgb += (u_lightambient%i * %s.rgb + diffuse)%s;\n", i, ambientStr, timesLightScale);
 		}

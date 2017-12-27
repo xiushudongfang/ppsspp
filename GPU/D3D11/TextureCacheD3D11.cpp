@@ -64,7 +64,7 @@ ID3D11SamplerState *SamplerCacheD3D11::GetOrCreateSampler(ID3D11Device *device, 
 	samp.AddressU = key.sClamp ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_WRAP;
 	samp.AddressV = key.tClamp ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_WRAP;
 	samp.AddressW = samp.AddressU;  // Mali benefits from all clamps being the same, and this one is irrelevant.
-	if (gstate_c.Supports(GPU_SUPPORTS_ANISOTROPY) && g_Config.iAnisotropyLevel > 0) {
+	if (key.aniso) {
 		samp.MaxAnisotropy = (float)(1 << g_Config.iAnisotropyLevel);
 	} else {
 		samp.MaxAnisotropy = 1.0f;
@@ -81,7 +81,7 @@ ID3D11SamplerState *SamplerCacheD3D11::GetOrCreateSampler(ID3D11Device *device, 
 		D3D11_FILTER_MIN_MAG_MIP_LINEAR,
 	};
 	// Only switch to aniso if linear min and mag are set.
-	if (samp.MaxAnisotropy > 1.0f && key.magFilt != 0 && key.minFilt != 0)
+	if (key.aniso && key.magFilt != 0 && key.minFilt != 0)
 		samp.Filter = D3D11_FILTER_ANISOTROPIC;
 	else
 		samp.Filter = filters[filterKey];
@@ -91,21 +91,9 @@ ID3D11SamplerState *SamplerCacheD3D11::GetOrCreateSampler(ID3D11Device *device, 
 	samp.MinLOD = -FLT_MAX;
 	samp.MipLODBias = 0.0f;
 #else
-	if (!key.mipEnable) {
-		samp.MaxLOD = 0.0f;
-		samp.MinLOD = 0.0f;
-		samp.MipLODBias = 0.0f;
-	} else if (key.lodAuto) {
-		// Auto selected mip + bias.
-		samp.MaxLOD = key.maxLevel;
-		samp.MinLOD = 0.0f;
-		samp.MipLODBias = (float)key.lodBias / 256.0f;
-	} else {
-		// Constant mip at bias.
-		samp.MaxLOD = std::max(0.0f, std::min((float)key.maxLevel, (float)key.lodBias / 256.0f));
-		samp.MinLOD = std::max(0.0f, std::min((float)key.maxLevel, (float)key.lodBias / 256.0f));
-		samp.MipLODBias = 0.0f;
-	}
+	samp.MaxLOD = key.maxLevel / 256.0f;
+	samp.MinLOD = key.minLevel / 256.0f;
+	samp.MipLODBias = key.lodBias / 256.0f;
 #endif
 	samp.ComparisonFunc = D3D11_COMPARISON_NEVER;
 	for (int i = 0; i < 4; i++) {
@@ -169,40 +157,14 @@ void TextureCacheD3D11::InvalidateLastTexture(TexCacheEntry *entry) {
 	}
 }
 
-void TextureCacheD3D11::UpdateSamplingParams(TexCacheEntry &entry, SamplerCacheKey &key) {
-	// TODO: Make GetSamplingParams write SamplerCacheKey directly
-	int minFilt;
-	int magFilt;
-	bool sClamp;
-	bool tClamp;
-	float lodBias;
-	bool autoMip;
-	u8 maxLevel = (entry.status & TexCacheEntry::STATUS_BAD_MIPS) ? 0 : entry.maxLevel;
-	GetSamplingParams(minFilt, magFilt, sClamp, tClamp, lodBias, maxLevel, entry.addr, autoMip);
-	key.minFilt = minFilt & 1;
-	key.mipEnable = (minFilt >> 2) & 1;
-	key.mipFilt = (minFilt >> 1) & 1;
-	key.magFilt = magFilt & 1;
-	key.sClamp = sClamp;
-	key.tClamp = tClamp;
-	// Don't clamp to maxLevel - this may bias magnify levels.
-	key.lodBias = (int)(lodBias * 256.0f);
-	key.maxLevel = maxLevel;
-	key.lodAuto = autoMip;
-
-	if (entry.framebuffer) {
-		WARN_LOG_REPORT_ONCE(wrongFramebufAttach, G3D, "Framebuffer still attached in UpdateSamplingParams()?");
-	}
-}
-
 void TextureCacheD3D11::SetFramebufferSamplingParams(u16 bufferWidth, u16 bufferHeight, SamplerCacheKey &key) {
 	int minFilt;
 	int magFilt;
 	bool sClamp;
 	bool tClamp;
 	float lodBias;
-	bool autoMip;
-	GetSamplingParams(minFilt, magFilt, sClamp, tClamp, lodBias, 0, 0, autoMip);
+	GETexLevelMode mode;
+	GetSamplingParams(minFilt, magFilt, sClamp, tClamp, lodBias, 0, 0, mode);
 
 	key.minFilt = minFilt & 1;
 	key.mipFilt = 0;
@@ -275,7 +237,7 @@ void TextureCacheD3D11::BindTexture(TexCacheEntry *entry) {
 		context_->PSSetShaderResources(0, 1, &textureView);
 		lastBoundTexture = textureView;
 	}
-	SamplerCacheKey key;
+	SamplerCacheKey key{};
 	UpdateSamplingParams(*entry, key);
 	ID3D11SamplerState *state = samplerCache_.GetOrCreateSampler(device_, key);
 	context_->PSSetSamplers(0, 1, &state);
@@ -445,19 +407,17 @@ void TextureCacheD3D11::ApplyTextureFramebuffer(TexCacheEntry *entry, VirtualFra
 		const u32 bytesPerColor = clutFormat == GE_CMODE_32BIT_ABGR8888 ? sizeof(u32) : sizeof(u16);
 		const u32 clutTotalColors = clutMaxBytes_ / bytesPerColor;
 
-		TexCacheEntry::Status alphaStatus = CheckAlpha(clutBuf_, GetClutDestFormatD3D11(clutFormat), clutTotalColors, clutTotalColors, 1);
+		TexCacheEntry::TexStatus alphaStatus = CheckAlpha(clutBuf_, GetClutDestFormatD3D11(clutFormat), clutTotalColors, clutTotalColors, 1);
 		gstate_c.SetTextureFullAlpha(alphaStatus == TexCacheEntry::STATUS_ALPHA_FULL);
-		gstate_c.SetTextureSimpleAlpha(alphaStatus == TexCacheEntry::STATUS_ALPHA_SIMPLE);
 	} else {
 		entry->status &= ~TexCacheEntry::STATUS_DEPALETTIZE;
 
 		framebufferManagerD3D11_->BindFramebufferAsColorTexture(0, framebuffer, BINDFBCOLOR_MAY_COPY_WITH_UV | BINDFBCOLOR_APPLY_TEX_OFFSET);
 
 		gstate_c.SetTextureFullAlpha(gstate.getTextureFormat() == GE_TFMT_5650);
-		gstate_c.SetTextureSimpleAlpha(gstate_c.textureFullAlpha);
 		framebufferManagerD3D11_->RebindFramebuffer();  // Probably not necessary.
 	}
-	SamplerCacheKey samplerKey;
+	SamplerCacheKey samplerKey{};
 	SetFramebufferSamplingParams(framebuffer->bufferWidth, framebuffer->bufferHeight, samplerKey);
 	ID3D11SamplerState *state = samplerCache_.GetOrCreateSampler(device_, samplerKey);
 	context_->PSSetSamplers(0, 1, &state);
@@ -513,9 +473,6 @@ void TextureCacheD3D11::BuildTexture(TexCacheEntry *const entry, bool replaceIma
 				badMipSizes = true;
 		}
 	}
-
-	// If GLES3 is available, we can preallocate the storage, which makes texture loading more efficient.
-	DXGI_FORMAT dstFmt = GetDestFormat(GETextureFormat(entry->format), gstate.getClutPaletteFormat());
 
 	int scaleFactor = standardScaleFactor_;
 
@@ -573,6 +530,8 @@ void TextureCacheD3D11::BuildTexture(TexCacheEntry *const entry, bool replaceIma
 		maxLevel = 0;
 	}
 
+	DXGI_FORMAT dstFmt = GetDestFormat(GETextureFormat(entry->format), gstate.getClutPaletteFormat());
+
 	if (IsFakeMipmapChange()) {
 		// NOTE: Since the level is not part of the cache key, we assume it never changes.
 		u8 level = std::max(0, gstate.getTexLevelOffset16() / 16);
@@ -598,7 +557,7 @@ void TextureCacheD3D11::BuildTexture(TexCacheEntry *const entry, bool replaceIma
 		entry->status &= ~TexCacheEntry::STATUS_BAD_MIPS;
 	}
 	if (replaced.Valid()) {
-		entry->SetAlphaStatus(TexCacheEntry::Status(replaced.AlphaStatus()));
+		entry->SetAlphaStatus(TexCacheEntry::TexStatus(replaced.AlphaStatus()));
 	}
 }
 
@@ -643,7 +602,7 @@ DXGI_FORMAT TextureCacheD3D11::GetDestFormat(GETextureFormat format, GEPaletteFo
 	}
 }
 
-TexCacheEntry::Status TextureCacheD3D11::CheckAlpha(const u32 *pixelData, u32 dstFmt, int stride, int w, int h) {
+TexCacheEntry::TexStatus TextureCacheD3D11::CheckAlpha(const u32 *pixelData, u32 dstFmt, int stride, int w, int h) {
 	CheckAlphaResult res;
 	switch (dstFmt) {
 	case DXGI_FORMAT_B4G4R4A4_UNORM:
@@ -661,7 +620,7 @@ TexCacheEntry::Status TextureCacheD3D11::CheckAlpha(const u32 *pixelData, u32 ds
 		break;
 	}
 
-	return (TexCacheEntry::Status)res;
+	return (TexCacheEntry::TexStatus)res;
 }
 
 ReplacedTextureFormat FromD3D11Format(u32 fmt) {
@@ -760,6 +719,14 @@ void TextureCacheD3D11::LoadTextureLevel(TexCacheEntry &entry, ReplacedTexture &
 		bool expand32 = !gstate_c.Supports(GPU_SUPPORTS_16BIT_FORMATS);
 		DecodeTextureLevel((u8 *)pixelData, decPitch, tfmt, clutformat, texaddr, level, bufw, false, false, expand32);
 
+		// We check before scaling since scaling shouldn't invent alpha from a full alpha texture.
+		if ((entry.status & TexCacheEntry::STATUS_CHANGE_FREQUENT) == 0) {
+			TexCacheEntry::TexStatus alphaStatus = CheckAlpha(pixelData, dstFmt, decPitch / bpp, w, h);
+			entry.SetAlphaStatus(alphaStatus, level);
+		} else {
+			entry.SetAlphaStatus(TexCacheEntry::STATUS_ALPHA_UNKNOWN);
+		}
+
 		if (scaleFactor > 1) {
 			u32 scaleFmt = (u32)dstFmt;
 			scaler.ScaleAlways((u32 *)mapData, pixelData, scaleFmt, w, h, scaleFactor);
@@ -779,13 +746,6 @@ void TextureCacheD3D11::LoadTextureLevel(TexCacheEntry &entry, ReplacedTexture &
 				}
 				decPitch = mapRowPitch;
 			}
-		}
-
-		if ((entry.status & TexCacheEntry::STATUS_CHANGE_FREQUENT) == 0) {
-			TexCacheEntry::Status alphaStatus = CheckAlpha(pixelData, dstFmt, decPitch / bpp, w, h);
-			entry.SetAlphaStatus(alphaStatus, level);
-		} else {
-			entry.SetAlphaStatus(TexCacheEntry::STATUS_ALPHA_UNKNOWN);
 		}
 
 		if (replacer_.Enabled()) {
@@ -819,6 +779,20 @@ bool TextureCacheD3D11::GetCurrentTextureDebug(GPUDebugBuffer &buffer, int level
 	SetTexture(false);
 	if (!nextTexture_)
 		return false;
+
+	// TODO: Centralize.
+	if (nextTexture_->framebuffer) {
+		VirtualFramebuffer *vfb = nextTexture_->framebuffer;
+		bool flipY = GetGPUBackend() == GPUBackend::OPENGL && g_Config.iRenderingMode != FB_NON_BUFFERED_MODE;
+		buffer.Allocate(vfb->bufferWidth, vfb->bufferHeight, GPU_DBG_FORMAT_8888, flipY);
+		bool retval = draw_->CopyFramebufferToMemorySync(vfb->fbo, Draw::FB_COLOR_BIT, 0, 0, vfb->bufferWidth, vfb->bufferHeight, Draw::DataFormat::R8G8B8A8_UNORM, buffer.GetData(), vfb->bufferWidth);
+		// Vulkan requires us to re-apply all dynamic state for each command buffer, and the above will cause us to start a new cmdbuf.
+		// So let's dirty the things that are involved in Vulkan dynamic state. Readbacks are not frequent so this won't hurt other backends.
+		gstate_c.Dirty(DIRTY_VIEWPORTSCISSOR_STATE | DIRTY_BLEND_STATE | DIRTY_DEPTHSTENCIL_STATE);
+		// We may have blitted to a temp FBO.
+		framebufferManager_->RebindFramebuffer();
+		return retval;
+	}
 
 	ID3D11Texture2D *texture = (ID3D11Texture2D *)nextTexture_->texturePtr;
 	if (!texture)

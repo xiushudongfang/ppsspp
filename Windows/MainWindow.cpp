@@ -33,8 +33,6 @@
 
 #include "base/display.h"
 #include "base/NativeApp.h"
-#include "Globals.h"
-
 #include "base/timeutil.h"
 #include "i18n/i18n.h"
 #include "input/input_state.h"
@@ -118,6 +116,7 @@ namespace MainWindow
 	static bool g_IgnoreWM_SIZE = false;
 	static bool inFullscreenResize = false;
 	static bool inResizeMove = false;
+	static bool hasFocus = true;
 
 	// gross hack
 	bool noFocusPause = false;	// TOGGLE_PAUSE state to override pause on lost focus
@@ -280,10 +279,6 @@ namespace MainWindow
 			NativeMessageReceived("gpu_resized", "");
 		}
 
-		if (screenManager) {
-			screenManager->RecreateAllViews();
-		}
-
 		// Don't save the window state if fullscreen.
 		if (!g_Config.bFullScreen) {
 			g_WindowState = newSizingType;
@@ -381,6 +376,7 @@ namespace MainWindow
 
 	void Minimize() {
 		ShowWindow(hwndMain, SW_MINIMIZE);
+		InputDevice::LoseFocus();
 	}
 
 	RECT DetermineWindowRectangle() {
@@ -690,7 +686,9 @@ namespace MainWindow
 				bool pause = true;
 				if (wParam == WA_ACTIVE || wParam == WA_CLICKACTIVE) {
 					WindowsRawInput::GainFocus();
-					InputDevice::GainFocus();
+					if (!IsIconic(GetHWND())) {
+						InputDevice::GainFocus();
+					}
 					g_activeWindow = WINDOW_MAINWINDOW;
 					pause = false;
 				}
@@ -703,14 +701,16 @@ namespace MainWindow
 					}
 				}
 
-				if (wParam == WA_ACTIVE) {
+				if (wParam == WA_ACTIVE || wParam == WA_CLICKACTIVE) {
 					NativeMessageReceived("got_focus", "");
+					hasFocus = true;
 					trapMouse = true;
 				}
 				if (wParam == WA_INACTIVE) {
 					NativeMessageReceived("lost_focus", "");
 					WindowsRawInput::LoseFocus();
 					InputDevice::LoseFocus();
+					hasFocus = false;
 					trapMouse = false;
 				}
 			}
@@ -742,6 +742,9 @@ namespace MainWindow
 				} else if (!inResizeMove) {
 					HandleSizeChange(wParam);
 				}
+				if (hasFocus) {
+					InputDevice::GainFocus();
+				}
 				break;
 
 			case SIZE_MINIMIZED:
@@ -749,6 +752,7 @@ namespace MainWindow
 				if (!g_Config.bPauseWhenMinimized) {
 					NativeMessageReceived("window minimized", "true");
 				}
+				InputDevice::LoseFocus();
 				break;
 			default:
 				break;
@@ -861,8 +865,8 @@ namespace MainWindow
 			break;
 
 		case WM_CLOSE:
-			EmuThread_Stop();
 			InputDevice::StopPolling();
+			EmuThread_Stop();
 			WindowsRawInput::Shutdown();
 
 			return DefWindowProc(hWnd,message,wParam,lParam);

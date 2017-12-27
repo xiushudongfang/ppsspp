@@ -18,8 +18,6 @@
 
 #pragma once
 
-#include "Globals.h"
+struct FShaderID;
 
-struct ShaderID;
-
-bool GenerateVulkanGLSLFragmentShader(const ShaderID &id, char *buffer);
+bool GenerateVulkanGLSLFragmentShader(const FShaderID &id, char *buffer);

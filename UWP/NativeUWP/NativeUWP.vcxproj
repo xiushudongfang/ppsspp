@@ -46,61 +46,61 @@
     <MinimumVisualStudioVersion>14.0</MinimumVisualStudioVersion>
     <AppContainerApplication>true</AppContainerApplication>
     <ApplicationType>Windows Store</ApplicationType>
-    <WindowsTargetPlatformVersion>10.0.10586.0</WindowsTargetPlatformVersion>
     <WindowsTargetPlatformMinVersion>10.0.10240.0</WindowsTargetPlatformMinVersion>
     <ApplicationTypeRevision>10.0</ApplicationTypeRevision>
+    <WindowsTargetPlatformVersion>10.0.15063.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v141</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v141</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v141</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <WholeProgramOptimization>true</WholeProgramOptimization>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v141</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='UWP Gold|Win32'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <WholeProgramOptimization>true</WholeProgramOptimization>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v141</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <WholeProgramOptimization>false</WholeProgramOptimization>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v141</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='UWP Gold|ARM'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <WholeProgramOptimization>false</WholeProgramOptimization>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v141</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <WholeProgramOptimization>true</WholeProgramOptimization>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v141</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='UWP Gold|x64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <WholeProgramOptimization>true</WholeProgramOptimization>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v141</PlatformToolset>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -304,7 +304,6 @@
     <ClInclude Include="..\..\ext\native\base\basictypes.h" />
     <ClInclude Include="..\..\ext\native\base\buffer.h" />
     <ClInclude Include="..\..\ext\native\base\colorutil.h" />
-    <ClInclude Include="..\..\ext\native\base\compat.h" />
     <ClInclude Include="..\..\ext\native\base\display.h" />
     <ClInclude Include="..\..\ext\native\base\linked_ptr.h" />
     <ClInclude Include="..\..\ext\native\base\logging.h" />
@@ -377,6 +376,7 @@
     <ClInclude Include="..\..\ext\native\ui\ui.h" />
     <ClInclude Include="..\..\ext\native\ui\ui_context.h" />
     <ClInclude Include="..\..\ext\native\ui\ui_screen.h" />
+    <ClInclude Include="..\..\ext\native\ui\ui_tween.h" />
     <ClInclude Include="..\..\ext\native\ui\view.h" />
     <ClInclude Include="..\..\ext\native\ui\viewgroup.h" />
     <ClInclude Include="..\..\ext\native\util\const_map.h" />
@@ -394,7 +394,6 @@
     <ClCompile Include="..\..\ext\native\base\backtrace.cpp" />
     <ClCompile Include="..\..\ext\native\base\buffer.cpp" />
     <ClCompile Include="..\..\ext\native\base\colorutil.cpp" />
-    <ClCompile Include="..\..\ext\native\base\compat.cpp" />
     <ClCompile Include="..\..\ext\native\base\display.cpp" />
     <ClCompile Include="..\..\ext\native\base\logging.cpp" />
     <ClCompile Include="..\..\ext\native\base\stringutil.cpp" />
@@ -1182,6 +1181,7 @@
     <ClCompile Include="..\..\ext\native\input\gesture_detector.cpp" />
     <ClCompile Include="..\..\ext\native\input\input_state.cpp" />
     <ClCompile Include="..\..\ext\native\math\curves.cpp" />
+    <ClCompile Include="..\..\ext\native\math\dataconv.cpp" />
     <ClCompile Include="..\..\ext\native\math\expression_parser.cpp" />
     <ClCompile Include="..\..\ext\native\math\fast\fast_math.c">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
@@ -1291,6 +1291,7 @@
     <ClCompile Include="..\..\ext\native\ui\ui.cpp" />
     <ClCompile Include="..\..\ext\native\ui\ui_context.cpp" />
     <ClCompile Include="..\..\ext\native\ui\ui_screen.cpp" />
+    <ClCompile Include="..\..\ext\native\ui\ui_tween.cpp" />
     <ClCompile Include="..\..\ext\native\ui\view.cpp" />
     <ClCompile Include="..\..\ext\native\ui\viewgroup.cpp" />
     <ClCompile Include="..\..\ext\native\util\hash\hash.cpp" />

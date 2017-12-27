@@ -29,7 +29,8 @@ TextDrawerAndroid::TextDrawerAndroid(Draw::DrawContext *draw) : TextDrawer(draw)
 	} else {
 		ELOG("Failed to find class: '%s'", textRendererClassName);
 	}
-	dpiScale_ = 1.0f;
+	dpiScale_ = CalculateDPIScale();
+	ILOG("Initializing TextDrawerAndroid with DPI scale %f", dpiScale_);
 }
 
 TextDrawerAndroid::~TextDrawerAndroid() {
@@ -46,7 +47,7 @@ bool TextDrawerAndroid::IsReady() const {
 uint32_t TextDrawerAndroid::SetFont(const char *fontName, int size, int flags) {
 	// We will only use the default font but just for consistency let's still involve
 	// the font name.
-	uint32_t fontHash = hash::Fletcher((const uint8_t *)fontName, strlen(fontName));
+	uint32_t fontHash = hash::Adler32((const uint8_t *)fontName, strlen(fontName));
 	fontHash ^= size;
 	fontHash ^= flags << 10;
 
@@ -79,11 +80,9 @@ std::string TextDrawerAndroid::NormalizeString(std::string str) {
 }
 
 void TextDrawerAndroid::MeasureString(const char *str, size_t len, float *w, float *h) {
-	uint32_t stringHash = hash::Fletcher((const uint8_t *)str, len);
-	uint32_t entryHash = stringHash ^ fontHash_;
-
+	CacheKey key{ std::string(str, len), fontHash_ };
 	TextMeasureEntry *entry;
-	auto iter = sizeCache_.find(entryHash);
+	auto iter = sizeCache_.find(key);
 	if (iter != sizeCache_.end()) {
 		entry = iter->second.get();
 	} else {
@@ -102,7 +101,7 @@ void TextDrawerAndroid::MeasureString(const char *str, size_t len, float *w, flo
 		entry = new TextMeasureEntry();
 		entry->width = (size >> 16);
 		entry->height = (size & 0xFFFF);
-		sizeCache_[entryHash] = std::unique_ptr<TextMeasureEntry>(entry);
+		sizeCache_[key] = std::unique_ptr<TextMeasureEntry>(entry);
 	}
 	entry->lastUsedFrame = frameCount_;
 	*w = entry->width * fontScaleX_ * dpiScale_;
@@ -129,11 +128,10 @@ void TextDrawerAndroid::MeasureStringRect(const char *str, size_t len, const Bou
 	float total_w = 0.0f;
 	float total_h = 0.0f;
 	for (size_t i = 0; i < lines.size(); i++) {
-		uint32_t stringHash = hash::Fletcher((const uint8_t *)&lines[i][0], lines[i].length());
-		uint32_t entryHash = stringHash ^ fontHash_;
+		CacheKey key{ lines[i], fontHash_ };
 
 		TextMeasureEntry *entry;
-		auto iter = sizeCache_.find(entryHash);
+		auto iter = sizeCache_.find(key);
 		if (iter != sizeCache_.end()) {
 			entry = iter->second.get();
 		} else {
@@ -146,7 +144,7 @@ void TextDrawerAndroid::MeasureStringRect(const char *str, size_t len, const Bou
 			entry = new TextMeasureEntry();
 			entry->width = sizecx;
 			entry->height = sizecy;
-			sizeCache_[entryHash] = std::unique_ptr<TextMeasureEntry>(entry);
+			sizeCache_[key] = std::unique_ptr<TextMeasureEntry>(entry);
 		}
 		entry->lastUsedFrame = frameCount_;
 
@@ -164,24 +162,19 @@ void TextDrawerAndroid::DrawString(DrawBuffer &target, const char *str, float x,
 	std::string text(NormalizeString(std::string(str)));
 	if (text.empty())
 		return;
-	JNIEnv *env;
-	int result = javaVM->GetEnv((void **)&env, JNI_VERSION_1_6);
-	assert(env == env_);
 
-	uint32_t stringHash = hash::Fletcher((const uint8_t *)text.data(), text.size());
-	uint32_t entryHash = stringHash ^ fontHash_ ^ (align << 24);
-
+	CacheKey key{ std::string(str), fontHash_ };
 	target.Flush(true);
 
 	TextStringEntry *entry;
 
-	auto iter = cache_.find(entryHash);
+	auto iter = cache_.find(key);
 	if (iter != cache_.end()) {
 		entry = iter->second.get();
 		entry->lastUsedFrame = frameCount_;
 		draw_->BindTexture(0, entry->texture);
 	} else {
-		double size;
+		double size = 0.0;
 		auto iter = fontMap_.find(fontHash_);
 		if (iter != fontMap_.end()) {
 			size = iter->second.size;
@@ -211,8 +204,7 @@ void TextDrawerAndroid::DrawString(DrawBuffer &target, const char *str, float x,
 
 		uint16_t *bitmapData = new uint16_t[entry->bmWidth * entry->bmHeight];
 		jint* jimage = env_->GetIntArrayElements(imageData, nullptr);
-		int arraySize = env_->GetArrayLength(imageData);
-		assert(arraySize == imageWidth * imageHeight);
+		assert(env_->GetArrayLength(imageData) == imageWidth * imageHeight);
 		for (int x = 0; x < entry->bmWidth; x++) {
 			for (int y = 0; y < entry->bmHeight; y++) {
 				uint32_t v = jimage[imageWidth * y + x];
@@ -221,10 +213,11 @@ void TextDrawerAndroid::DrawString(DrawBuffer &target, const char *str, float x,
 			}
 		}
 		env_->ReleaseIntArrayElements(imageData, jimage, 0);
+		env_->DeleteLocalRef(imageData);
 		desc.initData.push_back((uint8_t *)bitmapData);
 		entry->texture = draw_->CreateTexture(desc);
 		delete[] bitmapData;
-		cache_[entryHash] = std::unique_ptr<TextStringEntry>(entry);
+		cache_[key] = std::unique_ptr<TextStringEntry>(entry);
 		draw_->BindTexture(0, entry->texture);
 	}
 	float w = entry->bmWidth * fontScaleX_ * dpiScale_;
@@ -271,7 +264,8 @@ void TextDrawerAndroid::OncePerFrame() {
 	// If DPI changed (small-mode, future proper monitor DPI support), drop everything.
 	float newDpiScale = CalculateDPIScale();
 	if (newDpiScale != dpiScale_) {
-		ILOG("Scale changed - wiping cache");
+		// TODO: Don't bother if it's a no-op (cache already empty)
+		ILOG("DPI Scale changed (%f to %f) - wiping font cache (%d items, %d fonts)", dpiScale_, newDpiScale, (int)cache_.size(), (int)fontMap_.size());
 		dpiScale_ = newDpiScale;
 		ClearCache();
 		fontMap_.clear();  // size is precomputed using dpiScale_.

@@ -224,9 +224,6 @@ struct MeasureSpec {
 	float size;
 };
 
-class View;
-
-
 // Should cover all bases.
 struct EventParams {
 	View *v;
@@ -349,6 +346,9 @@ private:
 
 View *GetFocusedView();
 
+class Tween;
+class CallbackColorTween;
+
 class View {
 public:
 	View(LayoutParams *layoutParams = 0) : layoutParams_(layoutParams), visibility_(V_VISIBLE), measuredWidth_(0), measuredHeight_(0), enabledPtr_(0), enabled_(true), enabledMeansDisabled_(false) {
@@ -363,7 +363,7 @@ public:
 	virtual bool Key(const KeyInput &input) { return false; }
 	virtual void Touch(const TouchInput &input) {}
 	virtual void Axis(const AxisInput &input) {}
-	virtual void Update() {}
+	virtual void Update();
 
 	// If this view covers these coordinates, it should add itself and its children to the list.
 	virtual void Query(float x, float y, std::vector<View *> &list);
@@ -424,6 +424,12 @@ public:
 
 	Point GetFocusPosition(FocusDirection dir);
 
+	template <class T>
+	T *AddTween(T *t) {
+		tweens_.push_back(t);
+		return t;
+	}
+
 protected:
 	// Inputs to layout
 	std::unique_ptr<LayoutParams> layoutParams_;
@@ -437,6 +443,8 @@ protected:
 
 	// Outputs of layout. X/Y are absolute screen coordinates, hierarchy is "gone" here.
 	Bounds bounds_;
+
+	std::vector<Tween *> tweens_;
 
 private:
 	bool *enabledPtr_;
@@ -455,15 +463,13 @@ public:
 	bool Key(const KeyInput &input) override { return false; }
 	void Touch(const TouchInput &input) override {}
 	bool CanBeFocused() const override { return false; }
-	void Update() override {}
 };
 
 
 // All these light up their background when touched, or have focus.
 class Clickable : public View {
 public:
-	Clickable(LayoutParams *layoutParams)
-		: View(layoutParams), downCountDown_(0), dragging_(false), down_(false){}
+	Clickable(LayoutParams *layoutParams);
 
 	bool Key(const KeyInput &input) override;
 	void Touch(const TouchInput &input) override;
@@ -477,10 +483,13 @@ protected:
 	// the event.
 	// Use it for checking/unchecking checkboxes, etc.
 	virtual void Click();
+	void DrawBG(UIContext &dc, const Style &style);
 
-	int downCountDown_;
-	bool dragging_;
-	bool down_;
+	CallbackColorTween *bgColor_ = nullptr;
+	float bgColorLast_ = 0.0f;
+	int downCountDown_ = 0;
+	bool dragging_ = false;
+	bool down_ = false;
 };
 
 class Button : public Clickable {
@@ -607,11 +616,11 @@ public:
 // Use to trigger something or open a submenu screen.
 class Choice : public ClickableItem {
 public:
-	Choice(const std::string &text, LayoutParams *layoutParams = 0)
-		: ClickableItem(layoutParams), text_(text), smallText_(), atlasImage_(-1), iconImage_(-1), centered_(false), highlighted_(false), selected_(false) {}
-	Choice(const std::string &text, const std::string &smallText, bool selected = false, LayoutParams *layoutParams = 0)
+	Choice(const std::string &text, LayoutParams *layoutParams = nullptr)
+		: Choice(text, std::string(), false, layoutParams) {}
+	Choice(const std::string &text, const std::string &smallText, bool selected = false, LayoutParams *layoutParams = nullptr)
 		: ClickableItem(layoutParams), text_(text), smallText_(smallText), atlasImage_(-1), iconImage_(-1), centered_(false), highlighted_(false), selected_(selected) {}
-	Choice(ImageID image, LayoutParams *layoutParams = 0)
+	Choice(ImageID image, LayoutParams *layoutParams = nullptr)
 		: ClickableItem(layoutParams), atlasImage_(image), iconImage_(-1), centered_(false), highlighted_(false), selected_(false) {}
 
 	virtual void HighlightChanged(bool highlighted);
@@ -664,8 +673,7 @@ protected:
 
 class InfoItem : public Item {
 public:
-	InfoItem(const std::string &text, const std::string &rightText, LayoutParams *layoutParams = 0)
-		: Item(layoutParams), text_(text), rightText_(rightText) {}
+	InfoItem(const std::string &text, const std::string &rightText, LayoutParams *layoutParams = nullptr);
 
 	void Draw(UIContext &dc) override;
 
@@ -683,6 +691,9 @@ public:
 	}
 
 private:
+	CallbackColorTween *bgColor_ = nullptr;
+	CallbackColorTween *fgColor_ = nullptr;
+
 	std::string text_;
 	std::string rightText_;
 };
@@ -691,6 +702,7 @@ class ItemHeader : public Item {
 public:
 	ItemHeader(const std::string &text, LayoutParams *layoutParams = 0);
 	void Draw(UIContext &dc) override;
+	void GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const override;
 
 private:
 	std::string text_;
@@ -780,10 +792,11 @@ private:
 class TextEdit : public View {
 public:
 	TextEdit(const std::string &text, const std::string &placeholderText, LayoutParams *layoutParams = 0);
-	void SetText(const std::string &text) { text_ = text; caret_ = (int)text_.size(); }
+	void SetText(const std::string &text) { text_ = text; scrollPos_ = 0; caret_ = (int)text_.size(); }
 	void SetTextColor(uint32_t color) { textColor_ = color; hasTextColor_ = true; }
 	const std::string &GetText() const { return text_; }
 	void SetMaxLen(size_t maxLen) { maxLen_ = maxLen; }
+	void SetTextAlign(int align) { align_ = align; }  // Only really useful for setting FLAG_DYNAMIC_ASCII
 
 	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
 	void Draw(UIContext &dc) override;
@@ -802,8 +815,10 @@ private:
 	uint32_t textColor_;
 	bool hasTextColor_ = false;
 	int caret_;
+	int scrollPos_ = 0;
 	size_t maxLen_;
 	bool ctrlDown_ = false;  // TODO: Make some global mechanism for this.
+	int align_ = 0;
 	// TODO: Selections
 };
 

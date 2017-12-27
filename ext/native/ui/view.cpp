@@ -12,6 +12,7 @@
 #include "ui/ui.h"
 #include "ui/view.h"
 #include "ui/ui_context.h"
+#include "ui/ui_tween.h"
 #include "thin3d/thin3d.h"
 #include "base/NativeApp.h"
 
@@ -160,6 +161,24 @@ View::~View() {
 	if (HasFocus())
 		SetFocusedView(0);
 	RemoveQueuedEvents(this);
+
+	// Could use unique_ptr, but then we have to include tween everywhere.
+	for (auto &tween : tweens_)
+		delete tween;
+	tweens_.clear();
+}
+
+void View::Update() {
+	for (size_t i = 0; i < tweens_.size(); ++i) {
+		Tween *tween = tweens_[i];
+		if (!tween->Finished()) {
+			tween->Apply(this);
+		} else if (!tween->Persists()) {
+			tweens_.erase(tweens_.begin() + i);
+			i--;
+			delete tween;
+		}
+	}
 }
 
 void View::Measure(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert) {
@@ -211,6 +230,11 @@ void View::PersistData(PersistStatus status, std::string anonId, PersistMap &sto
 		}
 		break;
 	}
+
+	ITOA stringify;
+	for (int i = 0; i < (int)tweens_.size(); ++i) {
+		tweens_[i]->PersistData(status, tag + "/" + stringify.p((int)i), storage);
+	}
 }
 
 Point View::GetFocusPosition(FocusDirection dir) {
@@ -235,6 +259,28 @@ bool View::SetFocus() {
 		}
 	}
 	return false;
+}
+
+Clickable::Clickable(LayoutParams *layoutParams)
+	: View(layoutParams) {
+	// We set the colors later once we have a UIContext.
+	bgColor_ = AddTween(new CallbackColorTween(0.1f));
+	bgColor_->Persist();
+}
+
+void Clickable::DrawBG(UIContext &dc, const Style &style) {
+	if (style.background.type == DRAW_SOLID_COLOR) {
+		if (time_now() - bgColorLast_ >= 0.25f) {
+			bgColor_->Reset(style.background.color);
+		} else {
+			bgColor_->Divert(style.background.color, down_ ? 0.05f : 0.1f);
+		}
+		bgColorLast_ = time_now();
+
+		dc.FillRect(Drawable(bgColor_->CurrentValue()), bounds_);
+	} else {
+		dc.FillRect(style.background, bounds_);
+	}
 }
 
 void Clickable::Click() {
@@ -427,7 +473,7 @@ ClickableItem::ClickableItem(LayoutParams *layoutParams) : Clickable(layoutParam
 }
 
 void ClickableItem::Draw(UIContext &dc) {
-	Style style =	dc.theme->itemStyle;
+	Style style = dc.theme->itemStyle;
 
 	if (HasFocus()) {
 		style = dc.theme->itemFocusedStyle;
@@ -436,7 +482,7 @@ void ClickableItem::Draw(UIContext &dc) {
 		style = dc.theme->itemDownStyle;
 	}
 
-	dc.FillRect(style.background, bounds_);
+	DrawBG(dc, style);
 }
 
 void Choice::GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const {
@@ -478,7 +524,7 @@ void Choice::Draw(UIContext &dc) {
 	if (!IsSticky()) {
 		ClickableItem::Draw(dc);
 	} else {
-		Style style =	dc.theme->itemStyle;
+		Style style = dc.theme->itemStyle;
 		if (highlighted_) {
 			style = dc.theme->itemHighlightedStyle;
 		}
@@ -488,7 +534,8 @@ void Choice::Draw(UIContext &dc) {
 		if (HasFocus()) {
 			style = dc.theme->itemFocusedStyle;
 		}
-		dc.FillRect(style.background, bounds_);
+
+		DrawBG(dc, style);
 	}
 
 	Style style = dc.theme->itemStyle;
@@ -524,11 +571,30 @@ void Choice::Draw(UIContext &dc) {
 	}
 }
 
+InfoItem::InfoItem(const std::string &text, const std::string &rightText, LayoutParams *layoutParams)
+	: Item(layoutParams), text_(text), rightText_(rightText) {
+	// We set the colors later once we have a UIContext.
+	bgColor_ = AddTween(new CallbackColorTween(0.1f));
+	bgColor_->Persist();
+	fgColor_ = AddTween(new CallbackColorTween(0.1f));
+	fgColor_->Persist();
+}
+
 void InfoItem::Draw(UIContext &dc) {
 	Item::Draw(dc);
 
 	UI::Style style = HasFocus() ? dc.theme->itemFocusedStyle : dc.theme->infoStyle;
-	style.background.color &= 0x7fffffff;
+
+	if (style.background.type == DRAW_SOLID_COLOR) {
+		// For a smoother fade, using the same color with 0 alpha.
+		if ((style.background.color & 0xFF000000) == 0)
+			style.background.color = dc.theme->itemFocusedStyle.background.color & 0x00FFFFFF;
+		bgColor_->Divert(style.background.color & 0x7fffffff);
+		style.background.color = bgColor_->CurrentValue();
+	}
+	fgColor_->Divert(style.fgColor);
+	style.fgColor = fgColor_->CurrentValue();
+
 	dc.FillRect(style.background, bounds_);
 
 	int paddingX = 12;
@@ -549,6 +615,19 @@ void ItemHeader::Draw(UIContext &dc) {
 	dc.SetFontStyle(dc.theme->uiFontSmall);
 	dc.DrawText(text_.c_str(), bounds_.x + 4, bounds_.centerY(), dc.theme->headerStyle.fgColor, ALIGN_LEFT | ALIGN_VCENTER);
 	dc.Draw()->DrawImageStretch(dc.theme->whiteImage, bounds_.x, bounds_.y2()-2, bounds_.x2(), bounds_.y2(), dc.theme->headerStyle.fgColor);
+}
+
+void ItemHeader::GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const {
+	Bounds bounds(0, 0, layoutParams_->width, layoutParams_->height);
+	if (bounds.w < 0) {
+		// If there's no size, let's grow as big as we want.
+		bounds.w = horiz.size == 0 ? MAX_ITEM_SIZE : horiz.size;
+	}
+	if (bounds.h < 0) {
+		bounds.h = vert.size == 0 ? MAX_ITEM_SIZE : vert.size;
+	}
+	ApplyBoundsBySpec(bounds, horiz, vert);
+	dc.MeasureTextRect(dc.theme->uiFontSmall, 1.0f, 1.0f, text_.c_str(), (int)text_.length(), bounds, &w, &h, ALIGN_LEFT | ALIGN_VCENTER);
 }
 
 void PopupHeader::Draw(UIContext &dc) {
@@ -666,7 +745,7 @@ void Button::Draw(UIContext &dc) {
 	if (!IsEnabled()) style = dc.theme->buttonDisabledStyle;
 
 	// dc.Draw()->DrawImage4Grid(style.image, bounds_.x, bounds_.y, bounds_.x2(), bounds_.y2(), style.bgColor);
-	dc.FillRect(style.background, bounds_);
+	DrawBG(dc, style);
 	float tw, th;
 	dc.MeasureText(dc.theme->uiFont, 1.0f, 1.0f, text_.c_str(), &tw, &th);
 	if (tw > bounds_.w || imageID_ != -1) {
@@ -783,7 +862,7 @@ void TextEdit::Draw(UIContext &dc) {
 	float w, h;
 
 	Bounds textBounds = bounds_;
-	textBounds.x = textX;
+	textBounds.x = textX - scrollPos_;
 
 	if (text_.empty()) {
 		if (placeholderText_.size()) {
@@ -791,26 +870,27 @@ void TextEdit::Draw(UIContext &dc) {
 			dc.DrawTextRect(placeholderText_.c_str(), bounds_, c, ALIGN_CENTER);
 		}
 	} else {
-		dc.DrawTextRect(text_.c_str(), textBounds, textColor, ALIGN_VCENTER | ALIGN_LEFT);
+		dc.DrawTextRect(text_.c_str(), textBounds, textColor, ALIGN_VCENTER | ALIGN_LEFT | align_);
 	}
 
 	if (HasFocus()) {
 		// Hack to find the caret position. Might want to find a better way...
-		dc.MeasureTextCount(dc.theme->uiFont, 1.0f, 1.0f, text_.c_str(), caret_, &w, &h, ALIGN_VCENTER | ALIGN_LEFT);
-		float caretX = w;
-		caretX += textX;
-
+		dc.MeasureTextCount(dc.theme->uiFont, 1.0f, 1.0f, text_.c_str(), caret_, &w, &h, ALIGN_VCENTER | ALIGN_LEFT | align_);
+		float caretX = w - scrollPos_;
 		if (caretX > bounds_.w) {
-			// Scroll text to the left if the caret won't fit. Not ideal but looks better than not scrolling it.
-			textX -= caretX - bounds_.w;
+			scrollPos_ += caretX - bounds_.w;
 		}
+		if (caretX < 0) {
+			scrollPos_ += caretX;
+		}
+		caretX += textX;
 		dc.FillRect(UI::Drawable(textColor), Bounds(caretX - 1, bounds_.y + 2, 3, bounds_.h - 4));
 	}
 	dc.PopScissor();
 }
 
 void TextEdit::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
-	dc.MeasureText(dc.theme->uiFont, 1.0f, 1.0f, text_.size() ? text_.c_str() : "Wj", &w, &h);
+	dc.MeasureText(dc.theme->uiFont, 1.0f, 1.0f, text_.size() ? text_.c_str() : "Wj", &w, &h, align_);
 	w += 2;
 	h += 2;
 }
@@ -1114,10 +1194,11 @@ void Slider::Draw(UIContext &dc) {
 	else
 		sprintf(temp, "%i", *value_);
 	dc.SetFontStyle(dc.theme->uiFont);
-	dc.DrawText(temp, bounds_.x2() - 22, bounds_.centerY(), dc.theme->popupStyle.fgColor, ALIGN_CENTER);
+	dc.DrawText(temp, bounds_.x2() - 22, bounds_.centerY(), dc.theme->popupStyle.fgColor, ALIGN_CENTER | FLAG_DYNAMIC_ASCII);
 }
 
 void Slider::Update() {
+	View::Update();
 	if (repeat_ >= 0) {
 		repeat_++;
 	}
@@ -1227,6 +1308,7 @@ void SliderFloat::Draw(UIContext &dc) {
 }
 
 void SliderFloat::Update() {
+	View::Update();
 	if (repeat_ >= 0) {
 		repeat_++;
 	}

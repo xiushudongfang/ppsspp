@@ -247,7 +247,7 @@ void ReportScreen::CreateViews() {
 	}
 	screenshotFilename_ = path + ".reporting.jpg";
 	int shotWidth = 0, shotHeight = 0;
-	if (TakeGameScreenshot(screenshotFilename_.c_str(), SCREENSHOT_JPG, SCREENSHOT_DISPLAY, &shotWidth, &shotHeight, 4)) {
+	if (TakeGameScreenshot(screenshotFilename_.c_str(), ScreenshotFormat::JPG, SCREENSHOT_DISPLAY, &shotWidth, &shotHeight, 4)) {
 		float scale = 340.0f * (1.0f / g_dpi_scale_y) * (1.0f / shotHeight);
 		leftColumnItems->Add(new CheckBox(&includeScreenshot_, rp->T("FeedbackIncludeScreen", "Include a screenshot")))->SetEnabledPtr(&enableReporting_);
 		screenshot_ = leftColumnItems->Add(new AsyncImageFileView(screenshotFilename_, IS_DEFAULT, nullptr, new LinearLayoutParams(shotWidth * scale, shotHeight * scale, Margins(12, 0))));
@@ -364,17 +364,17 @@ void ReportFinishScreen::update() {
 	I18NCategory *rp = GetI18NCategory("Reporting");
 
 	if (!setStatus_) {
-		Reporting::Status status = Reporting::GetStatus();
+		Reporting::ReportStatus status = Reporting::GetStatus();
 		switch (status) {
-		case Reporting::Status::WORKING:
+		case Reporting::ReportStatus::WORKING:
 			resultNotice_->SetText(rp->T("FeedbackSubmitDone", "Your data has been submitted."));
 			break;
 
-		case Reporting::Status::FAILING:
+		case Reporting::ReportStatus::FAILING:
 			resultNotice_->SetText(rp->T("FeedbackSubmitFail", "Could not submit data to server.  Try updating PPSSPP."));
 			break;
 
-		case Reporting::Status::BUSY:
+		case Reporting::ReportStatus::BUSY:
 		default:
 			// Can't update yet.
 			break;

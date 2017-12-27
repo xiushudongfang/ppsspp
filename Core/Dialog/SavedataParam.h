@@ -323,7 +323,7 @@ public:
 	std::string GetKey(const SceUtilitySavedataParam *param) const;
 	bool HasKey(const SceUtilitySavedataParam *param) const;
 
-	static std::string GetSpaceText(u64 size);
+	static std::string GetSpaceText(u64 size, bool roundUp);
 
 	int SetPspParam(SceUtilitySavedataParam* param);
 	SceUtilitySavedataParam *GetPspParam();
@@ -352,7 +352,7 @@ private:
 	void Clear();
 	void SetFileInfo(int idx, PSPFileInfo &info, std::string saveName);
 	void SetFileInfo(SaveFileInfo &saveInfo, PSPFileInfo &info, std::string saveName);
-	void ClearFileInfo(SaveFileInfo &saveInfo, std::string saveName);
+	void ClearFileInfo(SaveFileInfo &saveInfo, const std::string &saveName);
 
 	bool LoadSaveData(SceUtilitySavedataParam *param, const std::string &saveDirName, const std::string& dirPath, bool secureMode);
 	void LoadCryptedSave(SceUtilitySavedataParam *param, u8 *data, u8 *saveData, int &saveSize, int prevCryptMode, bool &saveDone);

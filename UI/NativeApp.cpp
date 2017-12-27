@@ -43,6 +43,7 @@
 #endif
 
 #include "base/display.h"
+#include "base/timeutil.h"
 #include "base/logging.h"
 #include "base/NativeApp.h"
 #include "file/vfs.h"
@@ -51,7 +52,6 @@
 #include "net/resolve.h"
 #include "gfx_es2/draw_text.h"
 #include "gfx_es2/gpu_features.h"
-#include "gfx/gl_lost_manager.h"
 #include "i18n/i18n.h"
 #include "input/input_state.h"
 #include "math/fast/fast_math.h"
@@ -80,6 +80,8 @@
 #include "Core/System.h"
 #include "Core/HLE/__sceAudio.h"
 #include "Core/HLE/sceCtrl.h"
+#include "Core/HLE/sceUsbCam.h"
+#include "Core/HLE/sceUsbGps.h"
 #include "Core/Util/GameManager.h"
 #include "Core/Util/AudioFormat.h"
 #include "GPU/GPUInterface.h"
@@ -90,6 +92,7 @@
 #include "UI/HostTypes.h"
 #include "UI/OnScreenDisplay.h"
 #include "UI/MiscScreens.h"
+#include "UI/RemoteISOScreen.h"
 #include "UI/TiltEventProcessor.h"
 #include "UI/BackgroundAudio.h"
 #include "UI/TextureUtil.h"
@@ -124,6 +127,8 @@ std::unique_ptr<ManagedTexture> uiTexture;
 
 ScreenManager *screenManager;
 std::string config_filename;
+
+bool g_graphicsInited;
 
 #ifdef IOS
 bool iosCanUseJit;
@@ -298,12 +303,6 @@ bool CheckFontIsUsable(const wchar_t *fontFace) {
 #endif
 
 void NativeInit(int argc, const char *argv[], const char *savegame_dir, const char *external_dir, const char *cache_dir, bool fs) {
-#ifdef ANDROID_NDK_PROFILER
-	setenv("CPUPROFILE_FREQUENCY", "500", 1);
-	setenv("CPUPROFILE", "/sdcard/gmon.out", 1);
-	monstartup("ppsspp_jni.so");
-#endif
-
 	net::Init();  // This needs to happen before we load the config. So on Windows we also run it in Main. It's fine to call multiple times.
 
 	InitFastMath(cpu_info.bNEON);
@@ -396,6 +395,8 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 	const char *fileToLog = 0;
 	const char *stateToLoad = 0;
 
+	bool gotBootFilename = false;
+
 	// Parse command line
 	LogTypes::LOG_LEVELS logLevel = LogTypes::LINFO;
 	for (int i = 1; i < argc; i++) {
@@ -437,17 +438,34 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 				break;
 			}
 		} else {
-			if (boot_filename.empty()) {
-				boot_filename = argv[i];
-#ifdef _WIN32
-				boot_filename = ReplaceAll(boot_filename, "\\", "/");
-#endif
-				skipLogo = true;
+			// This parameter should be a boot filename. Only accept it if we
+			// don't already have one.
+			if (!gotBootFilename) {
+				gotBootFilename = true;
+				ILOG("Boot filename found in args: '%s'", argv[i]);
 
-				std::unique_ptr<FileLoader> fileLoader(ConstructFileLoader(boot_filename));
-				if (!fileLoader->Exists()) {
-					fprintf(stderr, "File not found: %s\n", boot_filename.c_str());
-					exit(1);
+				bool okToLoad = true;
+				if (System_GetPropertyBool(SYSPROP_SUPPORTS_PERMISSIONS)) {
+					PermissionStatus status = System_GetPermissionStatus(SYSTEM_PERMISSION_STORAGE);
+					if (status != PERMISSION_STATUS_GRANTED) {
+						ELOG("Storage permission not granted. Launching without argument.");
+						okToLoad = false;
+					} else {
+						ILOG("Storage permission granted.");
+					}
+				}
+				if (okToLoad) {
+					boot_filename = argv[i];
+#ifdef _WIN32
+					boot_filename = ReplaceAll(boot_filename, "\\", "/");
+#endif
+					skipLogo = true;
+
+					std::unique_ptr<FileLoader> fileLoader(ConstructFileLoader(boot_filename));
+					if (!fileLoader->Exists()) {
+						fprintf(stderr, "File not found: %s\n", boot_filename.c_str());
+						exit(1);
+					}
 				}
 			} else {
 				fprintf(stderr, "Can only boot one file");
@@ -456,7 +474,7 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 		}
 	}
 
-	if (fileToLog != NULL)
+	if (fileToLog)
 		LogManager::GetInstance()->ChangeFileLog(fileToLog);
 
 #ifndef _WIN32
@@ -527,6 +545,10 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 		screenManager->switchScreen(new LogoScreen());
 	}
 
+	if (g_Config.bRemoteShareOnStartup) {
+		StartRemoteISOSharing();
+	}
+
 	std::string sysName = System_GetProperty(SYSPROP_NAME);
 	isOuya = KeyMap::IsOuya(sysName);
 
@@ -541,9 +563,6 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 	// We do this here, instead of in NativeInitGraphics, because the display may be reset.
 	// When it's reset we don't want to forget all our managed things.
 	SetGPUBackend((GPUBackend) g_Config.iGPUBackend);
-	if (GetGPUBackend() == GPUBackend::OPENGL) {
-		gl_lost_manager_init();
-	}
 
 	// Must be done restarting by now.
 	restarting = false;
@@ -595,12 +614,14 @@ static void UIThemeInit() {
 
 void RenderOverlays(UIContext *dc, void *userdata);
 
-void NativeInitGraphics(GraphicsContext *graphicsContext) {
+bool NativeInitGraphics(GraphicsContext *graphicsContext) {
 	ILOG("NativeInitGraphics");
+	_assert_msg_(G3D, graphicsContext, "No graphics context!");
 
 	using namespace Draw;
 	Core_SetGraphicsContext(graphicsContext);
 	g_draw = graphicsContext->GetDrawContext();
+	_assert_msg_(G3D, g_draw, "No draw context available!");
 
 	ui_draw2d.SetAtlas(&ui_atlas);
 	ui_draw2d_front.SetAtlas(&ui_atlas);
@@ -673,10 +694,20 @@ void NativeInitGraphics(GraphicsContext *graphicsContext) {
 #endif
 
 	g_gameInfoCache = new GameInfoCache();
+
+	if (gpu)
+		gpu->DeviceRestore();
+
+	g_graphicsInited = true;
 	ILOG("NativeInitGraphics completed");
+	return true;
 }
 
 void NativeShutdownGraphics() {
+	if (gpu)
+		gpu->DeviceLost();
+
+	g_graphicsInited = false;
 	ILOG("NativeShutdownGraphics");
 
 #ifdef _WIN32
@@ -732,7 +763,7 @@ void TakeScreenshot() {
 		i++;
 	}
 
-	bool success = TakeGameScreenshot(filename, g_Config.bScreenshotsAsPNG ? SCREENSHOT_PNG : SCREENSHOT_JPG, SCREENSHOT_OUTPUT);
+	bool success = TakeGameScreenshot(filename, g_Config.bScreenshotsAsPNG ? ScreenshotFormat::PNG : ScreenshotFormat::JPG, SCREENSHOT_OUTPUT);
 	if (success) {
 		osm.Show(filename);
 	} else {
@@ -790,7 +821,8 @@ void NativeRender(GraphicsContext *graphicsContext) {
 	case GPUBackend::DIRECT3D9:
 		ortho.setOrthoD3D(0.0f, xres, yres, 0.0f, -1.0f, 1.0f);
 		Matrix4x4 translation;
-		translation.setTranslation(Vec3(-0.5f, -0.5f, 0.0f));
+		// Account for the small window adjustment.
+		translation.setTranslation(Vec3(-0.5f * g_dpi_scale_x / g_dpi_scale_real_x, -0.5f * g_dpi_scale_y / g_dpi_scale_real_y, 0.0f));
 		ortho = translation * ortho;
 		break;
 	case GPUBackend::DIRECT3D11:
@@ -834,6 +866,14 @@ void NativeRender(GraphicsContext *graphicsContext) {
 #endif
 		}
 
+		// Test lost/restore on PC
+#if 0
+		if (gpu) {
+			gpu->DeviceLost();
+			gpu->DeviceRestore();
+		}
+#endif
+
 		graphicsContext->Resize();
 		screenManager->resized();
 
@@ -860,8 +900,12 @@ void HandleGlobalMessage(const std::string &msg, const std::string &value) {
 		std::string setString = inputboxValue.size() > 1 ? inputboxValue[1] : "";
 		if (inputboxValue[0] == "IP")
 			g_Config.proAdhocServer = setString;
-		if (inputboxValue[0] == "nickname")
+		else if (inputboxValue[0] == "nickname")
 			g_Config.sNickName = setString;
+		else if (inputboxValue[0] == "remoteiso_subdir")
+			g_Config.sRemoteISOSubdir = setString;
+		else if (inputboxValue[0] == "remoteiso_server")
+			g_Config.sLastRemoteISOServer = setString;
 		inputboxValue.clear();
 	}
 	if (msg == "bgImage_updated") {
@@ -902,37 +946,20 @@ void HandleGlobalMessage(const std::string &msg, const std::string &value) {
 void NativeUpdate() {
 	PROFILE_END_FRAME();
 
+	std::vector<PendingMessage> toProcess;
 	{
 		std::lock_guard<std::mutex> lock(pendingMutex);
-		for (size_t i = 0; i < pendingMessages.size(); i++) {
-			HandleGlobalMessage(pendingMessages[i].msg, pendingMessages[i].value);
-			screenManager->sendMessage(pendingMessages[i].msg.c_str(), pendingMessages[i].value.c_str());
-		}
+		toProcess = std::move(pendingMessages);
 		pendingMessages.clear();
+	}
+
+	for (size_t i = 0; i < toProcess.size(); i++) {
+		HandleGlobalMessage(toProcess[i].msg, toProcess[i].value);
+		screenManager->sendMessage(toProcess[i].msg.c_str(), toProcess[i].value.c_str());
 	}
 
 	g_DownloadManager.Update();
 	screenManager->update();
-}
-
-void NativeDeviceLost() {
-	ILOG("NativeDeviceLost");
-	// We start by calling gl_lost - this lets objects zero their native GL objects
-	// so they then don't try to delete them as well.
-	if (GetGPUBackend() == GPUBackend::OPENGL) {
-		gl_lost();
-	}
-	if (g_gameInfoCache)
-		g_gameInfoCache->Clear();
-	screenManager->deviceLost();
-}
-
-void NativeDeviceRestore() {
-	ILOG("NativeDeviceRestore");
-	if (GetGPUBackend() == GPUBackend::OPENGL) {
-		gl_restore();
-	}
-	screenManager->deviceRestore();
 }
 
 bool NativeIsAtTopLevel() {
@@ -1070,7 +1097,11 @@ void NativeMessageReceived(const char *message, const char *value) {
 
 void NativeResized() {
 	// NativeResized can come from any thread so we just set a flag, then process it later.
-	resized = true;
+	if (g_graphicsInited) {
+		resized = true;
+	} else {
+		ILOG("NativeResized ignored, not initialized");
+	}
 }
 
 void NativeSetRestarting() {
@@ -1087,9 +1118,6 @@ void NativeShutdown() {
 	screenManager = nullptr;
 
 	host->ShutdownGraphics();
-	if (GetGPUBackend() == GPUBackend::OPENGL) {
-		gl_lost_manager_shutdown();
-	}
 
 #if !PPSSPP_PLATFORM(UWP)
 	delete host;
@@ -1117,4 +1145,12 @@ void NativeShutdown() {
 
 void NativePermissionStatus(SystemPermission permission, PermissionStatus status) {
 	// TODO: Send this through the screen system? Nicer than listening to string messages
+}
+
+void PushNewGpsData(float latitude, float longitude, float altitude, float speed, float bearing, long long time) {
+	GPS::setGpsData(latitude, longitude, altitude, speed, bearing, time);
+}
+
+void PushCameraImage(long long length, unsigned char* image) {
+	Camera::pushCameraImage(length, image);
 }

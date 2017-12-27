@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <string>
 #include "base/NativeApp.h"
 
 enum {
@@ -11,8 +12,8 @@ enum {
 	GPU_VENDOR_AMD = 2,
 	GPU_VENDOR_INTEL = 3,
 	GPU_VENDOR_ARM = 4,  // Mali
-	GPU_VENDOR_POWERVR = 5,
-	GPU_VENDOR_ADRENO = 6,
+	GPU_VENDOR_IMGTEC = 5,
+	GPU_VENDOR_QUALCOMM = 6,
 	GPU_VENDOR_BROADCOM = 7,
 	GPU_VENDOR_UNKNOWN = 0,
 };
@@ -110,3 +111,5 @@ extern std::string g_all_egl_extensions;
 
 void CheckGLExtensions();
 void SetGLCoreContext(bool flag);
+
+std::string ApplyGLSLPrelude(const std::string &source, uint32_t stage);

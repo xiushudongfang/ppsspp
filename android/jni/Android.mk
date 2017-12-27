@@ -127,6 +127,7 @@ EGL_FILES := \
 VULKAN_FILES := \
   $(SRC)/Common/Vulkan/VulkanLoader.cpp \
   $(SRC)/Common/Vulkan/VulkanContext.cpp \
+  $(SRC)/Common/Vulkan/VulkanDebug.cpp \
   $(SRC)/Common/Vulkan/VulkanImage.cpp \
   $(SRC)/Common/Vulkan/VulkanMemory.cpp \
   $(SRC)/GPU/Vulkan/FragmentShaderGeneratorVulkan.cpp \
@@ -136,6 +137,7 @@ VULKAN_FILES := \
   $(SRC)/GPU/Vulkan/PipelineManagerVulkan.cpp \
   $(SRC)/GPU/Vulkan/ShaderManagerVulkan.cpp \
   $(SRC)/GPU/Vulkan/StateMappingVulkan.cpp \
+  $(SRC)/GPU/Vulkan/StencilBufferVulkan.cpp \
   $(SRC)/GPU/Vulkan/TextureCacheVulkan.cpp \
   $(SRC)/GPU/Vulkan/TextureScalerVulkan.cpp \
   $(SRC)/GPU/Vulkan/DepalettizeShaderVulkan.cpp \
@@ -143,10 +145,16 @@ VULKAN_FILES := \
   $(SRC)/GPU/Vulkan/VulkanUtil.cpp
 #endif
 
+SPIRV_CROSS_FILES := \
+  $(SRC)/ext/SPIRV-Cross/spirv_cfg.cpp \
+  $(SRC)/ext/SPIRV-Cross/spirv_cross.cpp \
+  $(SRC)/ext/SPIRV-Cross/spirv_glsl.cpp
+
 EXEC_AND_LIB_FILES := \
   $(ARCH_FILES) \
   $(EGL_FILES) \
   $(VULKAN_FILES) \
+  $(SPIRV_CROSS_FILES) \
   TestRunner.cpp \
   $(SRC)/Core/MIPS/MIPS.cpp.arm \
   $(SRC)/Core/MIPS/MIPSAnalyst.cpp \
@@ -222,6 +230,8 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/GPU/Common/TextureCacheCommon.cpp.arm \
   $(SRC)/GPU/Common/TextureScalerCommon.cpp.arm \
   $(SRC)/GPU/Common/ShaderCommon.cpp \
+  $(SRC)/GPU/Common/ShaderTranslation.cpp \
+  $(SRC)/GPU/Common/StencilCommon.cpp \
   $(SRC)/GPU/Common/SplineCommon.cpp.arm \
   $(SRC)/GPU/Common/DrawEngineCommon.cpp.arm \
   $(SRC)/GPU/Common/TransformCommon.cpp.arm \
@@ -357,6 +367,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/HLE/sceSsl.cpp \
   $(SRC)/Core/HLE/sceUmd.cpp \
   $(SRC)/Core/HLE/sceUsb.cpp \
+  $(SRC)/Core/HLE/sceUsbCam.cpp \
   $(SRC)/Core/HLE/sceUsbGps.cpp \
   $(SRC)/Core/HLE/sceUtility.cpp \
   $(SRC)/Core/HLE/sceVaudio.cpp \
@@ -443,6 +454,7 @@ ifeq ($(HEADLESS),1)
   LOCAL_MODULE := ppsspp_headless
   LOCAL_SRC_FILES := \
     $(SRC)/headless/Headless.cpp \
+    $(SRC)/headless/StubHost.cpp \
     $(SRC)/headless/Compare.cpp
 
   include $(BUILD_EXECUTABLE)

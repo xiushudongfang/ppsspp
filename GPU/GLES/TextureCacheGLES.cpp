@@ -128,24 +128,33 @@ void TextureCacheGLES::UpdateSamplingParams(TexCacheEntry &entry, bool force) {
 	bool sClamp;
 	bool tClamp;
 	float lodBias;
-	bool autoMip;
 	u8 maxLevel = (entry.status & TexCacheEntry::STATUS_BAD_MIPS) ? 0 : entry.maxLevel;
-	GetSamplingParams(minFilt, magFilt, sClamp, tClamp, lodBias, maxLevel, entry.addr, autoMip);
+	GETexLevelMode mode;
+	GetSamplingParams(minFilt, magFilt, sClamp, tClamp, lodBias, maxLevel, entry.addr, mode);
 
 	if (gstate_c.Supports(GPU_SUPPORTS_TEXTURE_LOD_CONTROL)) {
 		if (maxLevel != 0) {
 			// TODO: What about a swap of autoMip mode?
 			if (force || entry.lodBias != lodBias) {
-				if (autoMip) {
+				if (mode == GE_TEXLEVEL_MODE_AUTO) {
 #ifndef USING_GLES2
 					// Sigh, LOD_BIAS is not even in ES 3.0.. but we could do it in the shader via texture()...
 					glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, lodBias);
 #endif
 					glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_LOD, 0);
 					glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, (float)maxLevel);
-				} else {
+				} else if (mode == GE_TEXLEVEL_MODE_CONST) {
 					glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_LOD, std::max(0.0f, std::min((float)maxLevel, lodBias)));
 					glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, std::max(0.0f, std::min((float)maxLevel, lodBias)));
+				} else {  // mode == GE_TEXLEVEL_MODE_SLOPE) {
+					// It's incorrect to use the slope as a bias. Instead it should be passed
+					// into the shader directly as an explicit lod level, with the bias on top. For now, we just kill the
+					// lodBias in this mode, working around #9772.
+#ifndef USING_GLES2
+					glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, 0.0f);
+#endif
+					glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_LOD, 0);
+					glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, (float)maxLevel);
 				}
 				entry.lodBias = lodBias;
 			}
@@ -185,8 +194,8 @@ void TextureCacheGLES::SetFramebufferSamplingParams(u16 bufferWidth, u16 bufferH
 	bool sClamp;
 	bool tClamp;
 	float lodBias;
-	bool autoMip;
-	GetSamplingParams(minFilt, magFilt, sClamp, tClamp, lodBias, 0, 0, autoMip);
+	GETexLevelMode mode;
+	GetSamplingParams(minFilt, magFilt, sClamp, tClamp, lodBias, 0, 0, mode);
 
 	minFilt &= 1;  // framebuffers can't mipmap.
 
@@ -506,16 +515,14 @@ void TextureCacheGLES::ApplyTextureFramebuffer(TexCacheEntry *entry, VirtualFram
 		const u32 bytesPerColor = clutFormat == GE_CMODE_32BIT_ABGR8888 ? sizeof(u32) : sizeof(u16);
 		const u32 clutTotalColors = clutMaxBytes_ / bytesPerColor;
 
-		TexCacheEntry::Status alphaStatus = CheckAlpha(clutBuf_, getClutDestFormat(clutFormat), clutTotalColors, clutTotalColors, 1);
+		TexCacheEntry::TexStatus alphaStatus = CheckAlpha(clutBuf_, getClutDestFormat(clutFormat), clutTotalColors, clutTotalColors, 1);
 		gstate_c.SetTextureFullAlpha(alphaStatus == TexCacheEntry::STATUS_ALPHA_FULL);
-		gstate_c.SetTextureSimpleAlpha(alphaStatus == TexCacheEntry::STATUS_ALPHA_SIMPLE);
 	} else {
 		entry->status &= ~TexCacheEntry::STATUS_DEPALETTIZE;
 
 		framebufferManagerGL_->BindFramebufferAsColorTexture(0, framebuffer, BINDFBCOLOR_MAY_COPY_WITH_UV | BINDFBCOLOR_APPLY_TEX_OFFSET);
 
 		gstate_c.SetTextureFullAlpha(gstate.getTextureFormat() == GE_TFMT_5650);
-		gstate_c.SetTextureSimpleAlpha(gstate_c.textureFullAlpha);
 	}
 
 	framebufferManagerGL_->RebindFramebuffer();
@@ -730,7 +737,7 @@ void TextureCacheGLES::BuildTexture(TexCacheEntry *const entry, bool replaceImag
 		entry->status &= ~TexCacheEntry::STATUS_BAD_MIPS;
 	}
 	if (replaced.Valid()) {
-		entry->SetAlphaStatus(TexCacheEntry::Status(replaced.AlphaStatus()));
+		entry->SetAlphaStatus(TexCacheEntry::TexStatus(replaced.AlphaStatus()));
 	}
 
 	if (gstate_c.Supports(GPU_SUPPORTS_ANISOTROPY)) {
@@ -806,7 +813,7 @@ void *TextureCacheGLES::DecodeTextureLevelOld(GETextureFormat format, GEPaletteF
 	return tmpTexBufRearrange_.data();
 }
 
-TexCacheEntry::Status TextureCacheGLES::CheckAlpha(const u32 *pixelData, GLenum dstFmt, int stride, int w, int h) {
+TexCacheEntry::TexStatus TextureCacheGLES::CheckAlpha(const u32 *pixelData, GLenum dstFmt, int stride, int w, int h) {
 	CheckAlphaResult res;
 	switch (dstFmt) {
 	case GL_UNSIGNED_SHORT_4_4_4_4:
@@ -824,7 +831,7 @@ TexCacheEntry::Status TextureCacheGLES::CheckAlpha(const u32 *pixelData, GLenum 
 		break;
 	}
 
-	return (TexCacheEntry::Status)res;
+	return (TexCacheEntry::TexStatus)res;
 }
 
 void TextureCacheGLES::LoadTextureLevel(TexCacheEntry &entry, ReplacedTexture &replaced, int level, bool replaceImages, int scaleFactor, GLenum dstFmt) {
@@ -869,17 +876,18 @@ void TextureCacheGLES::LoadTextureLevel(TexCacheEntry &entry, ReplacedTexture &r
 
 		// Textures are always aligned to 16 bytes bufw, so this could safely be 4 always.
 		texByteAlign = dstFmt == GL_UNSIGNED_BYTE ? 4 : 2;
-
 		pixelData = (u32 *)finalBuf;
-		if (scaleFactor > 1)
-			scaler.Scale(pixelData, dstFmt, w, h, scaleFactor);
 
+		// We check before scaling since scaling shouldn't invent alpha from a full alpha texture.
 		if ((entry.status & TexCacheEntry::STATUS_CHANGE_FREQUENT) == 0) {
-			TexCacheEntry::Status alphaStatus = CheckAlpha(pixelData, dstFmt, useUnpack ? bufw : w, w, h);
+			TexCacheEntry::TexStatus alphaStatus = CheckAlpha(pixelData, dstFmt, useUnpack ? bufw : w, w, h);
 			entry.SetAlphaStatus(alphaStatus, level);
 		} else {
 			entry.SetAlphaStatus(TexCacheEntry::STATUS_ALPHA_UNKNOWN);
 		}
+
+		if (scaleFactor > 1)
+			scaler.Scale(pixelData, dstFmt, w, h, scaleFactor);
 
 		if (replacer_.Enabled()) {
 			ReplacedTextureDecodeInfo replacedInfo;
@@ -909,6 +917,11 @@ void TextureCacheGLES::LoadTextureLevel(TexCacheEntry &entry, ReplacedTexture &r
 		glTexSubImage2D(GL_TEXTURE_2D, level, 0, 0, w, h, components2, dstFmt, pixelData);
 	} else {
 		PROFILE_THIS_SCOPE("loadtex");
+		// Avoid misleading errors in texture upload, these are common.
+		GLenum err = glGetError();
+		if (err) {
+			WARN_LOG(G3D, "Got an error BEFORE texture upload: %08x (%s)", err, GLEnumToString(err).c_str());
+		}
 		if (IsFakeMipmapChange())
 			glTexImage2D(GL_TEXTURE_2D, 0, components, w, h, 0, components2, dstFmt, pixelData);
 		else
@@ -931,15 +944,9 @@ void TextureCacheGLES::LoadTextureLevel(TexCacheEntry &entry, ReplacedTexture &r
 					host->NotifyUserMessage(err->T("Warning: Video memory FULL, switching to slow caching mode"), 2.0f);
 				}
 			} else if (err != GL_NO_ERROR) {
-				const char *str = "other";
-				switch (err) {
-				case GL_OUT_OF_MEMORY: str = "out_of_memory"; break;
-				case GL_INVALID_ENUM: str = "invalid_enum"; break;
-				case GL_INVALID_VALUE: str = "invalid_value"; break;
-				}
 				// We checked the err anyway, might as well log if there is one.
 				WARN_LOG(G3D, "Got an error in texture upload: %08x (%s) (components=%s components2=%s dstFmt=%s w=%d h=%d level=%d)",
-					err, str, GLEnumToString(components).c_str(), GLEnumToString(components2).c_str(), GLEnumToString(dstFmt).c_str(),
+					err, GLEnumToString(err).c_str(), GLEnumToString(components).c_str(), GLEnumToString(components2).c_str(), GLEnumToString(dstFmt).c_str(),
 					w, h, level);
 			}
 		}
@@ -1024,4 +1031,41 @@ bool TextureCacheGLES::DecodeTexture(u8* output, const GPUgstate &state) {
 
 	gstate = oldState;
 	return true;
+}
+
+bool TextureCacheGLES::GetCurrentTextureDebug(GPUDebugBuffer &buffer, int level) {
+#ifndef USING_GLES2
+	GPUgstate saved;
+	if (level != 0) {
+		saved = gstate;
+
+		// The way we set textures is a bit complex.  Let's just override level 0.
+		gstate.texsize[0] = gstate.texsize[level];
+		gstate.texaddr[0] = gstate.texaddr[level];
+		gstate.texbufwidth[0] = gstate.texbufwidth[level];
+	}
+
+	SetTexture(true);
+	ApplyTexture();
+	int w = gstate.getTextureWidth(level);
+	int h = gstate.getTextureHeight(level);
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w);
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h);
+
+	if (level != 0) {
+		gstate = saved;
+	}
+
+	buffer.Allocate(w, h, GE_FORMAT_8888, false);
+	glPixelStorei(GL_PACK_ALIGNMENT, 4);
+	glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer.GetData());
+
+	return true;
+#else
+	return false;
+#endif
+}
+
+void TextureCacheGLES::DeviceRestore(Draw::DrawContext *draw) {
+	draw_ = draw;
 }

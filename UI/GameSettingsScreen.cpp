@@ -48,7 +48,6 @@
 #include "Common/KeyMap.h"
 #include "Common/FileUtil.h"
 #include "Common/OSVersion.h"
-#include "Common/Vulkan/VulkanLoader.h"
 #include "Core/Config.h"
 #include "Core/Host.h"
 #include "Core/System.h"
@@ -73,6 +72,8 @@ extern bool iosCanUseJit;
 extern bool targetIsJailbroken;
 #endif
 
+extern bool VulkanMayBeAvailable();
+
 GameSettingsScreen::GameSettingsScreen(std::string gamePath, std::string gameID, bool editThenRestore)
 	: UIDialogScreenWithGameBackground(gamePath), gameID_(gameID), enableReports_(false), editThenRestore_(editThenRestore) {
 	lastVertical_ = UseVerticalLayout();
@@ -94,21 +95,22 @@ bool CheckSupportInstancedTessellationGLES() {
 	bool vertexTexture = maxVertexTextureImageUnits >= 3; // At least 3 for hardware tessellation
 
 	bool canUseInstanceID = gl_extensions.EXT_draw_instanced || gl_extensions.ARB_draw_instanced;
-	bool canDefInstanceID = gl_extensions.IsGLES || gl_extensions.EXT_gpu_shader4;
+	bool canDefInstanceID = gl_extensions.IsGLES || gl_extensions.EXT_gpu_shader4 || gl_extensions.VersionGEThan(3, 1);
 	bool instanceRendering = gl_extensions.GLES3 || (canUseInstanceID && canDefInstanceID);
 
 	bool textureFloat = gl_extensions.ARB_texture_float || gl_extensions.OES_texture_float;
+	bool hasTexelFetch = gl_extensions.GLES3 || (!gl_extensions.IsGLES && gl_extensions.VersionGEThan(3, 3, 0)) || gl_extensions.EXT_gpu_shader4;
 
-	return instanceRendering && vertexTexture && textureFloat;
+	return instanceRendering && vertexTexture && textureFloat && hasTexelFetch;
 #endif
 }
 
 bool IsBackendSupportHWTess() {
-	switch (g_Config.iGPUBackend) {
-	case GPU_BACKEND_OPENGL:
+	switch (GetGPUBackend()) {
+	case GPUBackend::OPENGL:
 		return CheckSupportInstancedTessellationGLES();
-	case GPU_BACKEND_VULKAN:
-	case GPU_BACKEND_DIRECT3D11:
+	case GPUBackend::VULKAN:
+	case GPUBackend::DIRECT3D11:
 		return true;
 	}
 	return false;
@@ -177,8 +179,8 @@ void GameSettingsScreen::CreateViews() {
 	tabHolder->AddTab(ms->T("Graphics"), graphicsSettingsScroll);
 
 	graphicsSettings->Add(new ItemHeader(gr->T("Rendering Mode")));
-	static const char *renderingBackend[] = { "OpenGL", "Direct3D 9", "Direct3D 11", "Vulkan (experimental)" };
-	PopupMultiChoice *renderingBackendChoice = graphicsSettings->Add(new PopupMultiChoice(&g_Config.iGPUBackend, gr->T("Backend"), renderingBackend, GPU_BACKEND_OPENGL, ARRAY_SIZE(renderingBackend), gr->GetName(), screenManager()));
+	static const char *renderingBackend[] = { "OpenGL", "Direct3D 9", "Direct3D 11", "Vulkan" };
+	PopupMultiChoice *renderingBackendChoice = graphicsSettings->Add(new PopupMultiChoice(&g_Config.iGPUBackend, gr->T("Backend"), renderingBackend, (int)GPUBackend::OPENGL, ARRAY_SIZE(renderingBackend), gr->GetName(), screenManager()));
 	renderingBackendChoice->OnChoice.Handle(this, &GameSettingsScreen::OnRenderingBackend);
 #if !PPSSPP_PLATFORM(WINDOWS)
 	renderingBackendChoice->HideChoice(1);  // D3D9
@@ -190,27 +192,21 @@ void GameSettingsScreen::CreateViews() {
 	}
 #endif
 	bool vulkanAvailable = false;
-#if PPSSPP_PLATFORM(WINDOWS) || PPSSPP_PLATFORM(ANDROID)
+#ifndef IOS
 	vulkanAvailable = VulkanMayBeAvailable();
 #endif
 	if (!vulkanAvailable) {
 		renderingBackendChoice->HideChoice(3);
 	}
 
-	static const char *renderingMode[] = { "Non-Buffered Rendering", "Buffered Rendering", "Read Framebuffers To Memory (CPU)", "Read Framebuffers To Memory (GPU)"};
+	static const char *renderingMode[] = { "Non-Buffered Rendering", "Buffered Rendering"};
 	PopupMultiChoice *renderingModeChoice = graphicsSettings->Add(new PopupMultiChoice(&g_Config.iRenderingMode, gr->T("Mode"), renderingMode, 0, ARRAY_SIZE(renderingMode), gr->GetName(), screenManager()));
 	renderingModeChoice->OnChoice.Add([=](EventParams &e) {
 		switch (g_Config.iRenderingMode) {
 		case FB_NON_BUFFERED_MODE:
-			settingInfo_->Show(gr->T("RenderingMode NonBuffered Tip", "Faster, but nothing may draw in some games"), e.v);
+			settingInfo_->Show(gr->T("RenderingMode NonBuffered Tip", "Faster, but graphics may be missing in some games"), e.v);
 			break;
 		case FB_BUFFERED_MODE:
-			break;
-#ifndef USING_GLES2
-		case FB_READFBOMEMORY_CPU:
-#endif
-		case FB_READFBOMEMORY_GPU:
-			settingInfo_->Show(gr->T("RenderingMode ReadFromMemory Tip", "Causes crashes in many games, not recommended"), e.v);
 			break;
 		}
 		return UI::EVENT_CONTINUE;
@@ -236,7 +232,6 @@ void GameSettingsScreen::CreateViews() {
 		softwareGPU->OnClick.Add([=](EventParams &e) {
 			if (g_Config.bSoftwareRendering)
 				settingInfo_->Show(gr->T("SoftGPU Tip", "Currently VERY slow"), e.v);
-			bloomHackEnable_ = !g_Config.bSoftwareRendering && (g_Config.iInternalResolution != 1);
 			return UI::EVENT_CONTINUE;
 		});
 		softwareGPU->OnClick.Handle(this, &GameSettingsScreen::OnSoftwareRendering);
@@ -256,11 +251,14 @@ void GameSettingsScreen::CreateViews() {
 	altSpeed->SetZeroLabel(gr->T("Unlimited"));
 
 	graphicsSettings->Add(new ItemHeader(gr->T("Features")));
-	I18NCategory *ps = GetI18NCategory("PostShaders");
-	postProcChoice_ = graphicsSettings->Add(new ChoiceWithValueDisplay(&g_Config.sPostShaderName, gr->T("Postprocessing Shader"), ps->GetName()));
-	postProcChoice_->OnClick.Handle(this, &GameSettingsScreen::OnPostProcShader);
-	postProcEnable_ = !g_Config.bSoftwareRendering && (g_Config.iRenderingMode != FB_NON_BUFFERED_MODE);
-	postProcChoice_->SetEnabledPtr(&postProcEnable_);
+	// Hide postprocess option on unsupported backends to avoid confusion.
+	if (GetGPUBackend() != GPUBackend::DIRECT3D9) {
+		I18NCategory *ps = GetI18NCategory("PostShaders");
+		postProcChoice_ = graphicsSettings->Add(new ChoiceWithValueDisplay(&g_Config.sPostShaderName, gr->T("Postprocessing Shader"), ps->GetName()));
+		postProcChoice_->OnClick.Handle(this, &GameSettingsScreen::OnPostProcShader);
+		postProcEnable_ = !g_Config.bSoftwareRendering && (g_Config.iRenderingMode != FB_NON_BUFFERED_MODE);
+		postProcChoice_->SetEnabledPtr(&postProcEnable_);
+	}
 
 #if !defined(MOBILE_DEVICE)
 	graphicsSettings->Add(new CheckBox(&g_Config.bFullScreen, gr->T("FullScreen")))->OnClick.Handle(this, &GameSettingsScreen::OnFullscreenChange);
@@ -353,12 +351,10 @@ void GameSettingsScreen::CreateViews() {
 		}
 		return UI::EVENT_CONTINUE;
 	});
-	bezierChoiceDisable_ = g_Config.bHardwareTessellation;
-	beziersChoice->SetDisabledPtr(&bezierChoiceDisable_);
+	beziersChoice->SetDisabledPtr(&g_Config.bHardwareTessellation);
 
 	CheckBox *tessellationHW = graphicsSettings->Add(new CheckBox(&g_Config.bHardwareTessellation, gr->T("Hardware Tessellation", "Hardware tessellation (experimental)")));
 	tessellationHW->OnClick.Add([=](EventParams &e) {
-		bezierChoiceDisable_ = g_Config.bHardwareTessellation;
 		settingInfo_->Show(gr->T("HardwareTessellation Tip", "Uses hardware to make curves, always uses a fixed quality"), e.v);
 		return UI::EVENT_CONTINUE;
 	});
@@ -665,13 +661,6 @@ void GameSettingsScreen::CreateViews() {
 
 	systemSettings->Add(new CheckBox(&g_Config.bFastMemory, sy->T("Fast Memory", "Fast Memory (Unstable)")))->OnClick.Handle(this, &GameSettingsScreen::OnJitAffectingSetting);
 
-	auto separateCPUThread = new CheckBox(&g_Config.bSeparateCPUThread, sy->T("Multithreaded (experimental)"));
-	systemSettings->Add(separateCPUThread);
-	separateCPUThread->OnClick.Add([=](EventParams &e) {
-		if (g_Config.bSeparateCPUThread)
-			settingInfo_->Show(sy->T("Multithreaded Tip", "Not always faster, causes glitches/crashing"), e.v);
-		return UI::EVENT_CONTINUE;
-	});
 	systemSettings->Add(new CheckBox(&g_Config.bSeparateIOThread, sy->T("I/O on thread (experimental)")))->SetEnabled(!PSP_IsInited());
 	static const char *ioTimingMethods[] = { "Fast (lag on slow storage)", "Host (bugs, less lag)", "Simulate UMD delays" };
 	View *ioTimingMethod = systemSettings->Add(new PopupMultiChoice(&g_Config.iIOTimingMethod, sy->T("IO timing method"), ioTimingMethods, 0, ARRAY_SIZE(ioTimingMethods), sy->GetName(), screenManager()));
@@ -688,8 +677,8 @@ void GameSettingsScreen::CreateViews() {
 
 #if PPSSPP_PLATFORM(ANDROID)
 	if (System_GetPropertyInt(SYSPROP_DEVICE_TYPE) == DEVICE_TYPE_MOBILE) {
-		static const char *screenRotation[] = {"Auto", "Landscape", "Portrait", "Landscape Reversed", "Portrait Reversed"};
-		PopupMultiChoice *rot = systemSettings->Add(new PopupMultiChoice(&g_Config.iScreenRotation, co->T("Screen Rotation"), screenRotation, 0, ARRAY_SIZE(screenRotation), co->GetName(), screenManager()));
+		static const char *screenRotation[] = {"Landscape", "Portrait", "Landscape Reversed", "Portrait Reversed"};
+		PopupMultiChoice *rot = systemSettings->Add(new PopupMultiChoice(&g_Config.iScreenRotation, co->T("Screen Rotation"), screenRotation, 1, ARRAY_SIZE(screenRotation), co->GetName(), screenManager()));
 		rot->OnChoice.Handle(this, &GameSettingsScreen::OnScreenRotation);
 
 		if (System_GetPropertyBool(SYSPROP_SUPPORTS_SUSTAINED_PERF_MODE)) {
@@ -792,6 +781,7 @@ void GameSettingsScreen::CreateViews() {
 	systemSettings->Add(new CheckBox(&g_Config.bDumpFrames, sy->T("Record Display")));
 	systemSettings->Add(new CheckBox(&g_Config.bUseFFV1, sy->T("Use Lossless Video Codec (FFV1)")));
 	systemSettings->Add(new CheckBox(&g_Config.bDumpAudio, sy->T("Record Audio")));
+	systemSettings->Add(new CheckBox(&g_Config.bSaveLoadResetsAVdumping, sy->T("Reset Recording on Save/Load State")));
 #endif
 	systemSettings->Add(new CheckBox(&g_Config.bDayLightSavings, sy->T("Day Light Saving")));
 	static const char *dateFormat[] = { "YYYYMMDD", "MMDDYYYY", "DDMMYYYY"};
@@ -816,7 +806,7 @@ UI::EventReturn GameSettingsScreen::OnSoftwareRendering(UI::EventParams &e) {
 	vtxCacheEnable_ = !g_Config.bSoftwareRendering && g_Config.bHardwareTransform;
 	postProcEnable_ = !g_Config.bSoftwareRendering && (g_Config.iRenderingMode != FB_NON_BUFFERED_MODE);
 	resolutionEnable_ = !g_Config.bSoftwareRendering && (g_Config.iRenderingMode != FB_NON_BUFFERED_MODE);
-	bezierChoiceDisable_ = g_Config.bHardwareTessellation;
+	bloomHackEnable_ = !g_Config.bSoftwareRendering && (g_Config.iInternalResolution != 1);
 	tessHWEnable_ = IsBackendSupportHWTess() && !g_Config.bSoftwareRendering && g_Config.bHardwareTransform;
 	return UI::EVENT_DONE;
 }
@@ -848,7 +838,7 @@ static void RecreateActivity() {
 }
 
 UI::EventReturn GameSettingsScreen::OnAdhocGuides(UI::EventParams &e) {
-	LaunchBrowser("http://forums.ppsspp.org/forumdisplay.php?fid=34");
+	LaunchBrowser("https://forums.ppsspp.org/forumdisplay.php?fid=34");
 	return UI::EVENT_DONE;
 }
 
@@ -982,12 +972,6 @@ UI::EventReturn GameSettingsScreen::OnChangeBackground(UI::EventParams &e) {
 	return UI::EVENT_DONE;
 }
 
-UI::EventReturn GameSettingsScreen::OnReloadCheats(UI::EventParams &e) {
-	// Hmm, strange mechanism.
-	g_Config.bReloadCheats = true;
-	return UI::EVENT_DONE;
-}
-
 UI::EventReturn GameSettingsScreen::OnFullscreenChange(UI::EventParams &e) {
 	System_SendMessage("toggle_fullscreen", g_Config.bFullScreen ? "1" : "0");
 	return UI::EVENT_DONE;
@@ -1002,20 +986,13 @@ UI::EventReturn GameSettingsScreen::OnResolutionChange(UI::EventParams &e) {
 	if (g_Config.iAndroidHwScale == 1) {
 		RecreateActivity();
 	}
-	bloomHackEnable_ = g_Config.iInternalResolution != 1;
+	bloomHackEnable_ = !g_Config.bSoftwareRendering && g_Config.iInternalResolution != 1;
 	Reporting::UpdateConfig();
 	return UI::EVENT_DONE;
 }
 
 UI::EventReturn GameSettingsScreen::OnHwScaleChange(UI::EventParams &e) {
 	RecreateActivity();
-	return UI::EVENT_DONE;
-}
-
-UI::EventReturn GameSettingsScreen::OnShaderChange(UI::EventParams &e) {
-	if (gpu) {
-		gpu->ClearShaderCache();
-	}
 	return UI::EVENT_DONE;
 }
 
@@ -1036,20 +1013,6 @@ void GameSettingsScreen::update() {
 	if (vertical != lastVertical_) {
 		RecreateViews();
 		lastVertical_ = vertical;
-	}
-}
-
-void GameSettingsScreen::sendMessage(const char *message, const char *value) {
-	// Always call the base class method first to handle the most common messages.
-	UIDialogScreenWithBackground::sendMessage(message, value);
-
-	if (!strcmp(message, "control mapping")) {
-		UpdateUIState(UISTATE_MENU);
-		screenManager()->push(new ControlMappingScreen());
-	}
-	if (!strcmp(message, "display layout editor")) {
-		UpdateUIState(UISTATE_MENU);
-		screenManager()->push(new DisplayLayoutScreen());
 	}
 }
 
@@ -1075,18 +1038,13 @@ void GameSettingsScreen::onFinish(DialogResult result) {
 	NativeMessageReceived("gpu_clearCache", "");
 }
 
-/*
-void GlobalSettingsScreen::CreateViews() {
-	using namespace UI;
-	root_ = new ScrollView(ORIENT_VERTICAL);
-
-	enableReports_ = Reporting::IsEnabled();
-}*/
-
 void GameSettingsScreen::CallbackRenderingBackend(bool yes) {
 	// If the user ends up deciding not to restart, set the config back to the current backend
 	// so it doesn't get switched by accident.
 	if (yes) {
+		// Extra save here to make sure the choice really gets saved even if there are shutdown bugs in
+		// the GPU backend code.
+		g_Config.Save();
 		System_SendMessage("graphics_restart", "");
 	} else {
 		g_Config.iGPUBackend = (int)GetGPUBackend();
@@ -1115,6 +1073,7 @@ UI::EventReturn GameSettingsScreen::OnChangeNickname(UI::EventParams &e) {
 		g_Config.sNickName = StripSpaces(name);
 	}
 #elif defined(__ANDROID__)
+	// TODO: The return value is handled in NativeApp::inputbox_completed. This is horrific.
 	System_SendMessage("inputbox", ("nickname:" + g_Config.sNickName).c_str());
 #endif
 	return UI::EVENT_DONE;

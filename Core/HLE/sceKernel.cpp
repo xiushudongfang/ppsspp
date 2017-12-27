@@ -75,6 +75,7 @@
 #include "scePsmf.h"
 #include "sceImpose.h"
 #include "sceUsb.h"
+#include "sceUsbGps.h"
 #include "scePspNpDrm_user.h"
 #include "sceVaudio.h"
 #include "sceHeap.h"
@@ -141,6 +142,7 @@ void __KernelInit()
 	__DmacInit();
 	__AudioCodecInit();
 	__VideoPmpInit();
+	__UsbGpsInit();
 	
 	SaveState::Init();  // Must be after IO, as it may create a directory
 	Reporting::Init();
@@ -269,6 +271,9 @@ void __KernelDoState(PointerWrap &p)
 		__sceAudiocodecDoState(p);
 		__VideoPmpDoState(p);
 		__AACDoState(p);
+		__UsbGpsDoState(p);
+
+		// IMPORTANT! Add new sections last!
 	}
 
 	{

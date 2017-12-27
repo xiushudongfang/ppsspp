@@ -21,10 +21,10 @@ enum CheckAlphaResult {
 	// These are intended to line up with TexCacheEntry::STATUS_ALPHA_UNKNOWN, etc.
 	CHECKALPHA_FULL = 0,
 	CHECKALPHA_ANY = 4,
-	CHECKALPHA_ZERO = 8,
 };
 
 #include "Common/Common.h"
+#include "Common/Swap.h"
 #include "Core/MemMap.h"
 #include "GPU/ge_constants.h"
 #include "GPU/Common/TextureDecoderNEON.h"

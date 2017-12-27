@@ -70,9 +70,6 @@
     <ClCompile Include="..\..\ext\native\base\colorutil.cpp">
       <Filter>base</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\ext\native\base\compat.cpp">
-      <Filter>base</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\ext\native\base\display.cpp">
       <Filter>base</Filter>
     </ClCompile>
@@ -155,6 +152,9 @@
       <Filter>ui</Filter>
     </ClCompile>
     <ClCompile Include="..\..\ext\native\ui\ui_screen.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\ext\native\ui\ui_tween.cpp">
       <Filter>ui</Filter>
     </ClCompile>
     <ClCompile Include="..\..\ext\native\ui\view.cpp">
@@ -457,6 +457,9 @@
     <ClCompile Include="..\..\ext\native\base\logging.cpp">
       <Filter>base</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\ext\native\math\dataconv.cpp">
+      <Filter>math</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
@@ -474,9 +477,6 @@
       <Filter>base</Filter>
     </ClInclude>
     <ClInclude Include="..\..\ext\native\base\colorutil.h">
-      <Filter>base</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\ext\native\base\compat.h">
       <Filter>base</Filter>
     </ClInclude>
     <ClInclude Include="..\..\ext\native\base\display.h">
@@ -591,6 +591,9 @@
       <Filter>ui</Filter>
     </ClInclude>
     <ClInclude Include="..\..\ext\native\ui\ui_screen.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\ext\native\ui\ui_tween.h">
       <Filter>ui</Filter>
     </ClInclude>
     <ClInclude Include="..\..\ext\native\ui\view.h">

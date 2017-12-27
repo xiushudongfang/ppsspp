@@ -70,6 +70,8 @@ void UIContext::PushScissor(const Bounds &bounds) {
 	Bounds clipped = TransformBounds(bounds);
 	if (scissorStack_.size())
 		clipped.Clip(scissorStack_.back());
+	else
+		clipped.Clip(bounds_);
 	scissorStack_.push_back(clipped);
 	ActivateTopScissor();
 }
@@ -172,7 +174,10 @@ void UIContext::DrawTextRect(const char *str, const Bounds &bounds, uint32_t col
 		Draw()->DrawTextRect(fontStyle_->atlasFont, str, bounds.x, bounds.y, bounds.w, bounds.h, color, align);
 	} else {
 		textDrawer_->SetFontScale(fontScaleX_, fontScaleY_);
-		textDrawer_->DrawStringRect(*Draw(), str, bounds, color, align);
+		Bounds rounded = bounds;
+		rounded.x = floorf(rounded.x);
+		rounded.y = floorf(rounded.y);
+		textDrawer_->DrawStringRect(*Draw(), str, rounded, color, align);
 		RebindTexture();
 	}
 }

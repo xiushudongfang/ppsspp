@@ -44,7 +44,7 @@ void GenerateDepalShader300(char *buffer, GEBufferFormat pixelFormat, ShaderLang
 		WRITE(p, "layout(set = 0, binding = 0) uniform sampler2D tex;\n");
 		WRITE(p, "layout(set = 0, binding = 1) uniform sampler2D pal;\n");
 		WRITE(p, "layout(location = 0) in vec2 v_texcoord0;\n");
-		WRITE(p, "layout(location = 0) out vec4 fragColor0\n;");
+		WRITE(p, "layout(location = 0) out vec4 fragColor0;\n");
 	} else {
 		if (gl_extensions.IsGLES) {
 			WRITE(p, "#version 300 es\n");
@@ -286,6 +286,15 @@ void GenerateDepalShader(char *buffer, GEBufferFormat pixelFormat, ShaderLanguag
 		GenerateDepalShaderFloat(buffer, pixelFormat, language);
 		break;
 	}
+}
+
+uint32_t DepalShaderCacheCommon::GenerateShaderID(uint32_t clutMode, GEBufferFormat pixelFormat) const {
+	return (clutMode & 0xFFFFFF) | (pixelFormat << 24);
+}
+
+uint32_t DepalShaderCacheCommon::GetClutID(GEPaletteFormat clutFormat, uint32_t clutHash) const {
+	// Simplistic.
+	return clutHash ^ (uint32_t)clutFormat;
 }
 
 #undef WRITE

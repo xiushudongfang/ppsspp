@@ -12,6 +12,7 @@
 #include <string>
 
 #include "base/logging.h"
+#include "DataFormat.h"
 
 class Matrix4x4;
 
@@ -176,68 +177,6 @@ enum class TextureType : uint8_t {
 	ARRAY2D,
 };
 
-enum class DataFormat : uint8_t {
-	UNDEFINED,
-
-	R8_UNORM,
-	R8G8_UNORM,
-	R8G8B8_UNORM,
-
-	R8G8B8A8_UNORM,
-	R8G8B8A8_UNORM_SRGB,
-	B8G8R8A8_UNORM,  // D3D style
-	B8G8R8A8_UNORM_SRGB,  // D3D style
-
-	R8G8B8A8_SNORM,
-	R8G8B8A8_UINT,
-	R8G8B8A8_SINT,
-
-	R4G4_UNORM_PACK8,
-	A4R4G4B4_UNORM_PACK16,  // A4 in the UPPER bit
-	B4G4R4A4_UNORM_PACK16,
-	R4G4B4A4_UNORM_PACK16,
-	R5G6B5_UNORM_PACK16,
-	B5G6R5_UNORM_PACK16,
-	R5G5B5A1_UNORM_PACK16, // A1 in the LOWER bit
-	B5G5R5A1_UNORM_PACK16, // A1 in the LOWER bit
-	A1R5G5B5_UNORM_PACK16, // A1 in the UPPER bit.
-
-	R16_FLOAT,
-	R16G16_FLOAT,
-	R16G16B16A16_FLOAT,
-
-	R32_FLOAT,
-	R32G32_FLOAT,
-	R32G32B32_FLOAT,
-	R32G32B32A32_FLOAT,
-
-	// Block compression formats.
-	// These are modern names for DXT and friends, now patent free.
-	// https://msdn.microsoft.com/en-us/library/bb694531.aspx
-	BC1_RGBA_UNORM_BLOCK,
-	BC1_RGBA_SRGB_BLOCK,
-	BC2_UNORM_BLOCK,  // 4-bit straight alpha + DXT1 color. Usually not worth using
-	BC2_SRGB_BLOCK,
-	BC3_UNORM_BLOCK,  // 3-bit alpha with 2 ref values (+ magic) + DXT1 color
-	BC3_SRGB_BLOCK,
-	BC4_UNORM_BLOCK,  // 1-channel, same storage as BC3 alpha
-	BC4_SNORM_BLOCK,
-	BC5_UNORM_BLOCK,  // 2-channel RG, each has same storage as BC3 alpha
-	BC5_SNORM_BLOCK,
-	BC6H_UFLOAT_BLOCK,  // TODO
-	BC6H_SFLOAT_BLOCK,
-	BC7_UNORM_BLOCK,    // Highly advanced, very expensive to compress, very good quality.
-	BC7_SRGB_BLOCK,
-
-	ETC1,
-
-	S8,
-	D16,
-	D24_S8,
-	D32F,
-	D32F_S8,
-};
-
 enum class ShaderStage {
 	VERTEX,
 	FRAGMENT,
@@ -311,6 +250,17 @@ enum InfoField {
 	DRIVER,
 };
 
+enum class GPUVendor {
+	VENDOR_UNKNOWN,
+	VENDOR_NVIDIA,
+	VENDOR_INTEL,
+	VENDOR_AMD,
+	VENDOR_ARM,  // Mali
+	VENDOR_QUALCOMM,
+	VENDOR_IMGTEC,  // PowerVR
+	VENDOR_BROADCOM,  // Raspberry
+};
+
 enum class NativeObject {
 	CONTEXT,
 	CONTEXT_EX,
@@ -322,9 +272,12 @@ enum class NativeObject {
 	BACKBUFFER_DEPTH_TEX,
 	FEATURE_LEVEL,
 	COMPATIBLE_RENDERPASS,
-	CURRENT_RENDERPASS,
-	RENDERPASS_COMMANDBUFFER,
-	BOUND_TEXTURE_IMAGEVIEW,
+	BACKBUFFER_RENDERPASS,
+	FRAMEBUFFER_RENDERPASS,
+	INIT_COMMANDBUFFER,
+	BOUND_TEXTURE0_IMAGEVIEW,
+	BOUND_TEXTURE1_IMAGEVIEW,
+	RENDER_MANAGER,
 };
 
 enum FBColorDepth {
@@ -393,6 +346,7 @@ public:
 
 	void AddRef() { refcount_++; }
 	bool Release();
+	bool ReleaseAssertLast();
 
 private:
 	int refcount_;
@@ -541,6 +495,7 @@ struct PipelineDesc {
 };
 
 struct DeviceCaps {
+	GPUVendor vendor;
 	DataFormat preferredDepthBufferFormat;
 	DataFormat preferredShadowMapFormatLow;
 	DataFormat preferredShadowMapFormatHigh;
@@ -553,6 +508,8 @@ struct DeviceCaps {
 	bool logicOpSupported;
 	bool framebufferCopySupported;
 	bool framebufferBlitSupported;
+	bool framebufferDepthCopySupported;
+	bool framebufferDepthBlitSupported;
 };
 
 struct TextureDesc {
@@ -583,10 +540,12 @@ struct RenderPassInfo {
 class DrawContext {
 public:
 	virtual ~DrawContext();
+	bool CreatePresets();
 
 	virtual const DeviceCaps &GetDeviceCaps() const = 0;
 	virtual uint32_t GetDataFormatSupport(DataFormat fmt) const = 0;
 	virtual std::vector<std::string> GetFeatureList() const { return std::vector<std::string>(); }
+	virtual std::vector<std::string> GetExtensionList() const { return std::vector<std::string>(); }
 
 	virtual uint32_t GetSupportedShaderLanguages() const = 0;
 
@@ -616,6 +575,9 @@ public:
 
 	virtual void CopyFramebufferImage(Framebuffer *src, int level, int x, int y, int z, Framebuffer *dst, int dstLevel, int dstX, int dstY, int dstZ, int width, int height, int depth, int channelBits) = 0;
 	virtual bool BlitFramebuffer(Framebuffer *src, int srcX1, int srcY1, int srcX2, int srcY2, Framebuffer *dst, int dstX1, int dstY1, int dstX2, int dstY2, int channelBits, FBBlitFilter filter) = 0;
+	virtual bool CopyFramebufferToMemorySync(Framebuffer *src, int channelBits, int x, int y, int w, int h, Draw::DataFormat format, void *pixels, int pixelStride) {
+		return false;
+	}
 
 	// These functions should be self explanatory.
 	// Binding a zero render target means binding the backbuffer.
@@ -623,7 +585,6 @@ public:
 
 	// color must be 0, for now.
 	virtual void BindFramebufferAsTexture(Framebuffer *fbo, int binding, FBChannel channelBit, int attachment) = 0;
-	virtual void BindFramebufferForRead(Framebuffer *fbo) = 0;
 
 	virtual uintptr_t GetFramebufferAPITexture(Framebuffer *fbo, int channelBits, int attachment) = 0;
 
@@ -661,6 +622,7 @@ public:
 	// Frame management (for the purposes of sync and resource management, necessary with modern APIs). Default implementations here.
 	virtual void BeginFrame() {}
 	virtual void EndFrame() {}
+	virtual void WipeQueue() {}
 
 	// This should be avoided as much as possible, in favor of clearing when binding a render target, which is native
 	// on Vulkan.
@@ -673,7 +635,7 @@ public:
 	}
 
 	virtual std::string GetInfoString(InfoField info) const = 0;
-	virtual uintptr_t GetNativeObject(NativeObject obj) const = 0;
+	virtual uintptr_t GetNativeObject(NativeObject obj) = 0;
 
 	virtual void HandleEvent(Event ev, int width, int height, void *param1 = nullptr, void *param2 = nullptr) = 0;
 
@@ -688,16 +650,12 @@ public:
 	virtual void FlushState() {}
 
 protected:
-	void CreatePresets();
-
 	ShaderModule *vsPresets_[VS_MAX_PRESET];
 	ShaderModule *fsPresets_[FS_MAX_PRESET];
 
 	int targetWidth_;
 	int targetHeight_;
 };
-
-size_t DataFormatSizeInBytes(DataFormat fmt);
 
 DrawContext *T3DCreateGLContext();
 
@@ -708,7 +666,7 @@ DrawContext *T3DCreateDX9Context(IDirect3D9 *d3d, IDirect3D9Ex *d3dEx, int adapt
 DrawContext *T3DCreateD3D11Context(ID3D11Device *device, ID3D11DeviceContext *context, ID3D11Device1 *device1, ID3D11DeviceContext1 *context1, D3D_FEATURE_LEVEL featureLevel, HWND hWnd);
 #endif
 
-DrawContext *T3DCreateVulkanContext(VulkanContext *context);
+DrawContext *T3DCreateVulkanContext(VulkanContext *context, bool split);
 
 // UBs for the preset shaders
 

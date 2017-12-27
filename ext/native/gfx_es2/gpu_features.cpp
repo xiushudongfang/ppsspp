@@ -64,7 +64,7 @@ void ProcessGPUFeatures() {
 		gl_extensions.bugs |= BUG_FBO_UNUSABLE;
 	}
 
-	if (gl_extensions.gpuVendor == GPU_VENDOR_POWERVR) {
+	if (gl_extensions.gpuVendor == GPU_VENDOR_IMGTEC) {
 		if (!strcmp(gl_extensions.model, "PowerVR SGX 543") ||
 			  !strcmp(gl_extensions.model, "PowerVR SGX 540") ||
 			  !strcmp(gl_extensions.model, "PowerVR SGX 530") ||
@@ -120,9 +120,9 @@ void CheckGLExtensions() {
 		} else if (vendor == "ARM") {
 			gl_extensions.gpuVendor = GPU_VENDOR_ARM;
 		} else if (vendor == "Imagination Technologies") {
-			gl_extensions.gpuVendor = GPU_VENDOR_POWERVR;
+			gl_extensions.gpuVendor = GPU_VENDOR_IMGTEC;
 		} else if (vendor == "Qualcomm") {
-			gl_extensions.gpuVendor = GPU_VENDOR_ADRENO;
+			gl_extensions.gpuVendor = GPU_VENDOR_QUALCOMM;
 		} else if (vendor == "Broadcom") {
 			gl_extensions.gpuVendor = GPU_VENDOR_BROADCOM;
 			// Just for reference: Galaxy Y has renderer == "VideoCore IV HW"
@@ -264,6 +264,7 @@ void CheckGLExtensions() {
 		}
 	}
 
+#ifndef __LIBRETRO__
 #ifdef WIN32
 	const char *wglString = 0;
 	if (wglGetExtensionsStringEXT)
@@ -277,6 +278,7 @@ void CheckGLExtensions() {
 #elif !defined(USING_GLES2)
 	// const char *glXString = glXQueryExtensionString();
 	// gl_extensions.EXT_swap_control_tear = strstr(glXString, "GLX_EXT_swap_control_tear") != 0;
+#endif
 #endif
 
 	// Check the desktop extension instead of the OES one. They are very similar.
@@ -392,7 +394,7 @@ void CheckGLExtensions() {
 #endif
 
 	// This is probably a waste of time, implementations lie.
-	if (gl_extensions.IsGLES || strstr(extString, "GL_ARB_ES2_compatibility")) {
+	if (gl_extensions.IsGLES || strstr(extString, "GL_ARB_ES2_compatibility") || gl_extensions.VersionGEThan(4, 1)) {
 		const GLint precisions[6] = {
 			GL_LOW_FLOAT, GL_MEDIUM_FLOAT, GL_HIGH_FLOAT,
 			GL_LOW_INT, GL_MEDIUM_INT, GL_HIGH_INT
@@ -417,6 +419,47 @@ void CheckGLExtensions() {
 		gl_extensions.ARB_vertex_array_object = true;
 		gl_extensions.ARB_framebuffer_object = true;
 	}
+
+	// Add any extensions that are included in core.  May be elided.
+	if (!gl_extensions.IsGLES) {
+		if (gl_extensions.VersionGEThan(3, 0)) {
+			gl_extensions.ARB_texture_float = true;
+		}
+		if (gl_extensions.VersionGEThan(3, 1)) {
+			gl_extensions.ARB_draw_instanced = true;
+			// ARB_uniform_buffer_object = true;
+		}
+		if (gl_extensions.VersionGEThan(3, 2)) {
+			// ARB_depth_clamp = true;
+		}
+		if (gl_extensions.VersionGEThan(3, 3)) {
+			gl_extensions.ARB_blend_func_extended = true;
+			// ARB_explicit_attrib_location = true;
+		}
+		if (gl_extensions.VersionGEThan(4, 0)) {
+			// ARB_gpu_shader5 = true;
+		}
+		if (gl_extensions.VersionGEThan(4, 1)) {
+			// ARB_get_program_binary = true;
+			// ARB_separate_shader_objects = true;
+			// ARB_shader_precision = true;
+			// ARB_viewport_array = true;
+		}
+		if (gl_extensions.VersionGEThan(4, 2)) {
+			// ARB_texture_storage = true;
+		}
+		if (gl_extensions.VersionGEThan(4, 3)) {
+			gl_extensions.ARB_copy_image = true;
+			// ARB_explicit_uniform_location = true;
+			// ARB_stencil_texturing = true;
+			// ARB_texture_view = true;
+			// ARB_vertex_attrib_binding = true;
+		}
+		if (gl_extensions.VersionGEThan(4, 4)) {
+			// ARB_buffer_storage = true;
+		}
+	}
+
 #ifdef __APPLE__
 	if (!gl_extensions.IsGLES && !gl_extensions.IsCoreContext) {
 		// Apple doesn't allow OpenGL 3.x+ in compatibility contexts.
@@ -441,4 +484,36 @@ void SetGLCoreContext(bool flag) {
 	useCoreContext = flag;
 	// For convenience, it'll get reset later.
 	gl_extensions.IsCoreContext = useCoreContext;
+}
+
+static const char *glsl_fragment_prelude =
+"#ifdef GL_ES\n"
+"precision mediump float;\n"
+"#endif\n";
+
+std::string ApplyGLSLPrelude(const std::string &source, uint32_t stage) {
+#if !PPSSPP_PLATFORM(UWP)
+	std::string temp;
+	std::string version = "";
+	if (!gl_extensions.IsGLES && gl_extensions.IsCoreContext) {
+		// We need to add a corresponding #version.  Apple drives fail without an exact match.
+		if (gl_extensions.VersionGEThan(3, 3)) {
+			version = StringFromFormat("#version %d%d0\n", gl_extensions.ver[0], gl_extensions.ver[1]);
+		} else if (gl_extensions.VersionGEThan(3, 2)) {
+			version = "#version 150\n";
+		} else if (gl_extensions.VersionGEThan(3, 1)) {
+			version = "#version 140\n";
+		} else {
+			version = "#version 130\n";
+		}
+	}
+	if (stage == GL_FRAGMENT_SHADER) {
+		temp = version + glsl_fragment_prelude + source;
+	} else if (stage == GL_VERTEX_SHADER) {
+		temp = version + source;
+	}
+	return temp;
+#else
+	return source;
+#endif
 }

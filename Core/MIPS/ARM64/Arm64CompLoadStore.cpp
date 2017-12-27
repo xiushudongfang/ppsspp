@@ -129,6 +129,8 @@ namespace MIPSComp {
 			}
 		}
 
+		DISABLE;
+
 		u32 iaddr = gpr.IsImm(rs) ? offset + gpr.GetImm(rs) : 0xFFFFFFFF;
 		std::vector<FixupBranch> skips;
 
@@ -374,6 +376,8 @@ namespace MIPSComp {
 					addrReg = SCRATCH1;
 				}
 			} else {
+				// This actually gets hit in micro machines! rs = ZR rt = ZR. Probably a bug.
+				// Leaving this a debug assert for future investigation.
 				_dbg_assert_msg_(JIT, !gpr.IsImm(rs), "Invalid immediate address?  CPU bug?");
 				load ? gpr.MapDirtyIn(rt, rs) : gpr.MapInIn(rt, rs);
 
